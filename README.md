@@ -71,6 +71,29 @@ For both architectures, the LHS scaling factor is required to have a TMA-aligned
 
 Please note that operations like input transposition or FP8 casting must be handled separately by the user, please implement or fuse them into prior kernels independently. While the library provides some simple PyTorch utility functions, these may result in slower performance, but our primary focus is on optimizing the GEMM kernels themselves.
 
+#### Hybrid block sparse references
+
+The lightweight `sparse_gemm.hybrid_sparse` package defines the canonical
+hybrid dense-block and 2:4-block weight format. It provides dense-to-sparse and
+sparse-to-dense conversion plus Torch references for normal, M-grouped
+contiguous, and M-grouped masked GEMM. Importing this package does not load the
+CUDA extension.
+
+```python
+from sparse_gemm.hybrid_sparse import (
+    HybridBlockSparseLayout,
+    dense_to_hybrid_block_sparse,
+    hybrid_block_sparse_gemm_ref,
+)
+
+layout = HybridBlockSparseLayout(block_h=16, block_w=16, block_n=1, block_m=2)
+packed_weight = dense_to_hybrid_block_sparse(weight, prune_mask, layout)
+output = hybrid_block_sparse_gemm_ref(activation, packed_weight)
+```
+
+For a Python-only installation, set `DG_SKIP_CUDA_BUILD=1` while installing.
+The CUDA kernels will use the same public format and reference API.
+
 #### Normal dense GEMMs (non-grouped)
 
 To perform a basic non-grouped FP8 GEMM, call the `fp8_gemm_{nt, nn, tn, tt}` function. For more details, please refer to the function documentation.
