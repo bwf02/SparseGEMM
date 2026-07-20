@@ -86,7 +86,7 @@ class TestHybridSparseFormat(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "exactly 2:4"):
             invalid_mask = make_valid_mask(weight, layout)
-            invalid_mask[0, 0] = False
+            invalid_mask[0, 2] = False
             dense_to_hybrid_block_sparse(weight, invalid_mask, layout)
         with self.assertRaisesRegex(ValueError, "divisible by block_h"):
             dense_to_hybrid_block_sparse(
