@@ -106,7 +106,22 @@ def benchmark_contiguous(
     hybrid_fn()
     deepgemm_fn()
     torch.cuda.synchronize()
-    torch.testing.assert_close(hybrid_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    previous_end = 0
+    valid_rows = torch.zeros(total_m, device="cuda", dtype=torch.bool)
+    for expert, end in enumerate(ends):
+        start = 0 if expert == 0 else align(previous_end, m_alignment)
+        torch.testing.assert_close(
+            hybrid_out[start:end],
+            deepgemm_out[start:end],
+            rtol=2e-2,
+            atol=2e-2,
+        )
+        valid_rows[start:end] = True
+        previous_end = end
+    if torch.any(~valid_rows):
+        torch.testing.assert_close(
+            hybrid_out[~valid_rows], torch.zeros_like(hybrid_out[~valid_rows])
+        )
 
     hybrid_times = time_hybrid(hybrid_fn, num_tests, flush_l2)
     deepgemm_time = bench_kineto(
