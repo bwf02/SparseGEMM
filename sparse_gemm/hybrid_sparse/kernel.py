@@ -263,13 +263,20 @@ def _hybrid_block_sparse_gemm_wgmma_tma(
     packed_weight: HybridBlockSparseWeight,
     out: Optional[torch.Tensor],
     binding: str,
+    block_h: int = 64,
+    block_w: int = 64,
 ) -> torch.Tensor:
     if not isinstance(packed_weight, HybridBlockSparseWeight):
         raise TypeError("packed_weight must be a HybridBlockSparseWeight")
     if len(packed_weight.original_shape) != 2:
         raise ValueError("WGMMA TMA GEMM requires packed weight shape [N, K]")
-    if packed_weight.layout.block_h != 64 or packed_weight.layout.block_w != 64:
-        raise ValueError("WGMMA TMA GEMM currently requires block_h=block_w=64")
+    if (
+        packed_weight.layout.block_h != block_h
+        or packed_weight.layout.block_w != block_w
+    ):
+        raise ValueError(
+            f"{binding} requires block_h={block_h}, block_w={block_w}"
+        )
     if a.dim() != 2:
         raise ValueError(f"activation must have shape [M, K], got {tuple(a.shape)}")
     if a.dtype != torch.bfloat16 or not a.is_cuda or not a.is_contiguous():
@@ -341,6 +348,22 @@ def hybrid_block_sparse_gemm_wgmma_tma_128x64(
         packed_weight,
         out,
         "hybrid_block_sparse_bf16_gemm_wgmma_tma_128x64",
+    )
+
+
+def hybrid_block_sparse_gemm_wgmma_tma_block128x32(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 128x32 weight-block TMA and WGMMA BF16 implementation."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x32",
+        block_h=128,
+        block_w=32,
     )
 
 

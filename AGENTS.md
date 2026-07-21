@@ -15,3 +15,13 @@
 
 - Keep older kernel versions in separate files when adding optimized variants,
   so correctness and performance can be compared across iterations.
+
+## JIT Kernel Organization
+
+- Do not place full CUDA kernel bodies inside JIT-generated raw strings.
+- Follow the DeepGEMM style: put readable kernel implementations under
+  `deep_gemm/include/deep_gemm/impls/*.cuh`.
+- Keep `csrc/jit_kernels/impls/*.hpp` focused on host-side argument checks,
+  runtime setup, launch configuration, and a small generated instantiation stub.
+- The generated JIT code should normally only include the target `.cuh` file and
+  instantiate the selected kernel symbol.
