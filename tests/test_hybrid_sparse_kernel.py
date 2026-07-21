@@ -70,13 +70,15 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             device="cuda",
         )
         for block_row in range(2):
-            sparse_block = mask[
-                block_row * 64 : (block_row + 1) * 64, :64
-            ].reshape(64, 16, 4)
-            sparse_block[:] = True
-            pair_ids = torch.randint(0, len(pairs), (64, 16), device="cuda")
-            keep = pairs[pair_ids]
-            sparse_block.scatter_(2, keep, False)
+            for block_column in (0, 128):
+                sparse_block = mask[
+                    block_row * 64 : (block_row + 1) * 64,
+                    block_column : block_column + 64,
+                ].reshape(64, 16, 4)
+                sparse_block[:] = True
+                pair_ids = torch.randint(0, len(pairs), (64, 16), device="cuda")
+                keep = pairs[pair_ids]
+                sparse_block.scatter_(2, keep, False)
         packed = dense_to_hybrid_block_sparse(weight, mask, layout)
         activation = torch.randn(65, 256, device="cuda", dtype=torch.bfloat16)
 
