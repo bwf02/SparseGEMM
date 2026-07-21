@@ -154,10 +154,10 @@ void hybrid_sparse_dense_wgmma_sync(
 #pragma unroll
             for (int k_tile = 0; k_tile < 4; ++k_tile) {
                 const auto desc_a = deep_gemm::mma::sm90::make_smem_desc(
-                    smem_weight + smem_layout(0, k_tile * 16),
+                    smem_weight + k_tile * 16,
                     static_cast<int>(cute::GMMA::LayoutType::B128), 0, 1024);
                 const auto desc_b = deep_gemm::mma::sm90::make_smem_desc(
-                    smem_activation + smem_layout(0, k_tile * 16),
+                    smem_activation + k_tile * 16,
                     static_cast<int>(cute::GMMA::LayoutType::B128), 0, 1024);
                 DenseMMA::wgmma(desc_a.desc_, desc_b.desc_, accumulator,
                                 has_accumulator || k_tile != 0);
@@ -245,10 +245,10 @@ void hybrid_sparse_2_4_wgmma_sync(
                     }
                 }
                 const auto desc_a = deep_gemm::mma::sm90::make_smem_desc(
-                    smem_weight + sparse_layout(0, k_tile * 16),
+                    smem_weight + k_tile * 16,
                     static_cast<int>(cute::GMMA::LayoutType::B64), 0, 512);
                 const auto desc_b = deep_gemm::mma::sm90::make_smem_desc(
-                    smem_activation + activation_layout(0, k_tile * 32),
+                    smem_activation + k_tile * 32,
                     static_cast<int>(cute::GMMA::LayoutType::B128), 0, 1024);
                 sparse_wgmma(desc_a.desc_, desc_b.desc_, accumulator,
                              hardware_metadata, has_accumulator || k_tile != 0);
