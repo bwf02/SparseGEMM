@@ -107,6 +107,17 @@ from sparse_gemm.hybrid_sparse import hybrid_block_sparse_gemm_naive
 output = hybrid_block_sparse_gemm_naive(activation_bf16, packed_weight)
 ```
 
+Benchmark this kernel against DeepGEMM BF16 with the repository's
+`bench_kineto` timing utility:
+
+```bash
+PYTHONPATH=$PWD python benchmarks/bench_hybrid_sparse.py
+```
+
+The default suite covers Qwen1.5-MoE routed-expert gate/up and down projection
+shapes. Select one shape and outer block ratio with, for example,
+`--m 128 --n 1408 --k 2048 --block-n 1 --block-m 2`.
+
 #### Normal dense GEMMs (non-grouped)
 
 To perform a basic non-grouped FP8 GEMM, call the `fp8_gemm_{nt, nn, tn, tt}` function. For more details, please refer to the function documentation.
