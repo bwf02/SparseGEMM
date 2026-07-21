@@ -7,6 +7,7 @@ from sparse_gemm.hybrid_sparse import (
     dense_to_hybrid_block_sparse,
     hybrid_block_sparse_gemm_naive,
     hybrid_block_sparse_gemm_tensorcore,
+    hybrid_block_sparse_gemm_wgmma_sync,
     hybrid_block_sparse_gemm_ref,
     hybrid_block_sparse_grouped_contiguous_naive,
     hybrid_block_sparse_grouped_contiguous_ref,
@@ -57,8 +58,10 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
 
         expected = hybrid_block_sparse_gemm_ref(activation, packed)
         actual = hybrid_block_sparse_gemm_tensorcore(activation, packed)
+        wgmma_actual = hybrid_block_sparse_gemm_wgmma_sync(activation, packed)
 
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+        torch.testing.assert_close(wgmma_actual, expected, rtol=1e-2, atol=1e-2)
 
     def test_tensorcore_matches_reference_for_row_varying_metadata(self):
         torch.manual_seed(102)
@@ -84,8 +87,26 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
 
         expected = hybrid_block_sparse_gemm_ref(activation, packed)
         actual = hybrid_block_sparse_gemm_tensorcore(activation, packed)
+        wgmma_actual = hybrid_block_sparse_gemm_wgmma_sync(activation, packed)
 
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+        torch.testing.assert_close(wgmma_actual, expected, rtol=1e-2, atol=1e-2)
+
+    def test_wgmma_sync_matches_reference_for_m_tails(self):
+        torch.manual_seed(103)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(64, 128, device="cuda", dtype=torch.bfloat16)
+        mask = make_mask(weight, layout, sparse_block_ids=(0,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+
+        for m in (1, 8, 63, 64, 65, 73):
+            with self.subTest(m=m):
+                activation = torch.randn(
+                    m, 128, device="cuda", dtype=torch.bfloat16
+                )
+                expected = hybrid_block_sparse_gemm_ref(activation, packed)
+                actual = hybrid_block_sparse_gemm_wgmma_sync(activation, packed)
+                torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
 
     def test_matches_reference_for_one_of_two_blocks(self):
         torch.manual_seed(101)
