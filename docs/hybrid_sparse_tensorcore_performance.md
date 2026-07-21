@@ -88,19 +88,33 @@ dense path and `19.49 us` for the sparse path. Active warps remain about
 `8%`; sparse long-scoreboard stalls are `46%`, so sparse metadata and data
 arrival latency remain the primary mainloop bottleneck.
 
-## Tile Experiment
+## Weight Block Experiment
 
-The preserved `128 x 64` variant reuses each weight tile across two 64-row
-activation subtiles. It passes the same metadata and M-tail correctness tests,
-but is slower than `64 x 64` for every measured shape from `M=1` through
-`M=512`. At `M=128, N=1408, K=2048`, latency rises from `33.9 us` to
-`46.9 us`; NCU reports `16.99 us` dense and `24.29 us` sparse. Halving the CTA
-count and doubling accumulator pressure outweigh weight reuse.
+The weight block row and CUDA output-channel tile are both 128 for the
+`128 x 32`, `128 x 64`, and `128 x 128` variants. Each CTA composes two
+64-channel WGMMA subtiles. The table uses 100 measurements without L2 flush on
+an NVIDIA H20; all variants use the same 25% hybrid sparsity pattern.
 
-With the current mapping, WGMMA's fixed `m64` dimension corresponds to 64
-output channels. A true `128 x 32` output tile would compute and discard half
-of each WGMMA result. A `128 x 128` CTA can compose two independent 64-row
-weight block-rows, but their hybrid selectors differ, so it cannot generally
-reuse packed weights and requires roughly twice the accumulator state. These
-shapes are therefore not candidates for the default kernel under the current
-`64 x 64` block format.
+| M | N | K | Weight block | Total (us) | Dense (us) | Sparse (us) | Reduce (us) | DeepGEMM (us) |
+|---:|---:|---:|:---|---:|---:|---:|---:|---:|
+| 128 | 1408 | 2048 | 64 x 64 | 26.84 | 9.19 | 12.47 | 5.18 | 9.66 |
+| 128 | 1408 | 2048 | 128 x 32 | 53.20 | 16.75 | 27.35 | 9.10 | 9.66 |
+| 128 | 1408 | 2048 | 128 x 64 | 42.67 | 13.97 | 19.58 | 9.11 | 9.66 |
+| 128 | 1408 | 2048 | 128 x 128 | 32.89 | 13.06 | 14.40 | 5.43 | 9.66 |
+| 512 | 1408 | 2048 | 64 x 64 | 56.67 | 22.94 | 27.81 | 5.92 | 25.45 |
+| 512 | 1408 | 2048 | 128 x 32 | 61.01 | 22.19 | 29.31 | 9.51 | 25.45 |
+| 512 | 1408 | 2048 | 128 x 64 | 53.97 | 22.03 | 22.43 | 9.51 | 25.45 |
+| 512 | 1408 | 2048 | 128 x 128 | 46.22 | 22.65 | 17.54 | 6.03 | 25.45 |
+
+At `M=512`, the `128 x 128` variant is 18.4% faster than `64 x 64`. At
+`M=128`, the smaller block remains faster because its larger output-channel
+grid provides more parallelism. Splitting the `128 x 128` reduction into an
+independent 64-column tile lowers reduction latency from about `9.5 us` to
+`6.0 us` at `M=512`.
+
+NCU reports zero shared-memory bank conflicts for the dense and sparse TMA
+mainloops. The `128 x 128` sparse kernel instead has a small 88-CTA grid, 124
+registers per thread, and long-scoreboard stalls from synchronous sparse
+metadata reads. Future work should target hardware-ready metadata packing and
+coalesced or staged metadata delivery rather than changing the current TMA
+swizzles solely for bank-conflict avoidance.
