@@ -44,7 +44,7 @@ public:
 #include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma.cuh>
 
 static void __instantiate_kernel() {
-    auto ptr = reinterpret_cast<void*>(&)") + symbol + R"();
+    auto ptr = reinterpret_cast<void*>(&)") + symbol + R"(<>);
     (void)ptr;
 }
 )";

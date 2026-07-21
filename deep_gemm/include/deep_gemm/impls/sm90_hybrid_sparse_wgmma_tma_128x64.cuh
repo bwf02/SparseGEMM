@@ -91,7 +91,8 @@ __device__ __forceinline__ void store_wgmma_accumulator(
 }
 
 
-extern "C" __global__ __launch_bounds__(kThreads, 1)
+template <int = 0>
+__global__ __launch_bounds__(kThreads, 1)
 void hybrid_sparse_dense_wgmma_tma_128x64(
         const long long* block_selector, const unsigned char*,
         float* dense_partial, float*, __nv_bfloat16*,
@@ -218,7 +219,8 @@ void hybrid_sparse_dense_wgmma_tma_128x64(
 }
 
 
-extern "C" __global__ __launch_bounds__(kThreads, 1)
+template <int = 0>
+__global__ __launch_bounds__(kThreads, 1)
 void hybrid_sparse_2_4_wgmma_tma_128x64(
         const long long* block_selector, const unsigned char* sparse_metadata,
         float*, float* sparse_partial, __nv_bfloat16*,
@@ -367,7 +369,8 @@ void hybrid_sparse_2_4_wgmma_tma_128x64(
 }
 
 
-extern "C" __global__ void hybrid_sparse_reduce_wgmma_tma_128x64(
+template <int = 0>
+__global__ void hybrid_sparse_reduce_wgmma_tma_128x64(
         const long long*, const unsigned char*, const float* dense_partial,
         const float* sparse_partial, __nv_bfloat16* output,
         const cute::TmaDescriptor, const cute::TmaDescriptor,
