@@ -11,6 +11,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma,
     hybrid_block_sparse_gemm_wgmma_tma_128x64,
     hybrid_block_sparse_gemm_wgmma_tma_block128x32,
+    hybrid_block_sparse_gemm_wgmma_tma_block128x64,
     hybrid_block_sparse_gemm_ref,
     hybrid_block_sparse_grouped_contiguous_naive,
     hybrid_block_sparse_grouped_contiguous_ref,
@@ -145,6 +146,24 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 )
                 expected = hybrid_block_sparse_gemm_ref(activation, packed)
                 actual = hybrid_block_sparse_gemm_wgmma_tma_block128x32(
+                    activation, packed
+                )
+                torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
+    def test_wgmma_tma_block128x64_matches_reference(self):
+        torch.manual_seed(105)
+        layout = HybridBlockSparseLayout(128, 64, 1, 2)
+        weight = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
+        mask = make_mask(weight, layout, sparse_block_ids=(1,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+
+        for m in (1, 64, 73, 128):
+            with self.subTest(m=m):
+                activation = torch.randn(
+                    m, 256, device="cuda", dtype=torch.bfloat16
+                )
+                expected = hybrid_block_sparse_gemm_ref(activation, packed)
+                actual = hybrid_block_sparse_gemm_wgmma_tma_block128x64(
                     activation, packed
                 )
                 torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)

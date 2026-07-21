@@ -10,6 +10,7 @@
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_128x64.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_block128x32.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_block128x64.hpp"
 #include "../utils/exception.hpp"
 #include "../utils/layout.hpp"
 
@@ -368,6 +369,61 @@ static void hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x32(
         dense_partial, sparse_partial, d, m, n, k, block_n, block_m);
 }
 
+static void hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x64(
+        const torch::Tensor& a,
+        const torch::Tensor& block_selector,
+        const torch::Tensor& dense_values,
+        const torch::Tensor& sparse_values,
+        const torch::Tensor& sparse_metadata,
+        const torch::Tensor& d,
+        const int& block_n,
+        const int& block_m) {
+    DG_HOST_ASSERT(device_runtime->get_arch_major() == 9);
+    DG_HOST_ASSERT(block_n > 0 and block_n <= block_m and block_m <= 63);
+    DG_HOST_ASSERT(a.is_cuda() and block_selector.is_cuda());
+    DG_HOST_ASSERT(dense_values.is_cuda() and sparse_values.is_cuda());
+    DG_HOST_ASSERT(sparse_metadata.is_cuda() and d.is_cuda());
+    DG_HOST_ASSERT(a.is_contiguous() and block_selector.is_contiguous());
+    DG_HOST_ASSERT(dense_values.is_contiguous() and sparse_values.is_contiguous());
+    DG_HOST_ASSERT(sparse_metadata.is_contiguous() and d.is_contiguous());
+    const auto device = a.get_device();
+    DG_HOST_ASSERT(block_selector.get_device() == device);
+    DG_HOST_ASSERT(dense_values.get_device() == device);
+    DG_HOST_ASSERT(sparse_values.get_device() == device);
+    DG_HOST_ASSERT(sparse_metadata.get_device() == device);
+    DG_HOST_ASSERT(d.get_device() == device);
+    DG_HOST_ASSERT(a.scalar_type() == torch::kBFloat16);
+    DG_HOST_ASSERT(dense_values.scalar_type() == torch::kBFloat16);
+    DG_HOST_ASSERT(sparse_values.scalar_type() == torch::kBFloat16);
+    DG_HOST_ASSERT(block_selector.scalar_type() == torch::kLong);
+    DG_HOST_ASSERT(sparse_metadata.scalar_type() == torch::kByte);
+    DG_HOST_ASSERT(d.scalar_type() == torch::kBFloat16);
+
+    const auto [m, k] = get_shape<2>(a);
+    const auto [m_, n] = get_shape<2>(d);
+    DG_HOST_ASSERT(m == m_ and m > 0 and n > 0 and k > 0);
+    DG_HOST_ASSERT(n % 128 == 0);
+    DG_HOST_ASSERT(k % (64 * block_m) == 0);
+    const int block_rows = n / 128;
+    const int block_groups = k / (64 * block_m);
+    const int dense_count = block_m - block_n;
+    DG_HOST_ASSERT(get_shape<2>(block_selector) ==
+                   std::make_tuple(block_rows, block_groups));
+    DG_HOST_ASSERT(get_shape<5>(dense_values) ==
+                   std::make_tuple(block_rows, block_groups, dense_count, 128, 64));
+    DG_HOST_ASSERT(get_shape<5>(sparse_values) ==
+                   std::make_tuple(block_rows, block_groups, block_n, 128, 32));
+    DG_HOST_ASSERT(get_shape<5>(sparse_metadata) ==
+                   std::make_tuple(block_rows, block_groups, block_n, 128, 16));
+
+    const auto partial_options = a.options().dtype(torch::kFloat);
+    const auto dense_partial = torch::empty({m, n}, partial_options);
+    const auto sparse_partial = torch::empty({m, n}, partial_options);
+    sm90_hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x64(
+        a, block_selector, dense_values, sparse_values, sparse_metadata,
+        dense_partial, sparse_partial, d, m, n, k, block_n, block_m);
+}
+
 static void check_hybrid_grouped_common(
         const torch::Tensor& a,
         const torch::Tensor& block_selector,
@@ -591,6 +647,17 @@ static void register_apis(pybind11::module_& m) {
     m.def(
         "hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x32",
         &hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x32,
+        pybind11::arg("a"),
+        pybind11::arg("block_selector"),
+        pybind11::arg("dense_values"),
+        pybind11::arg("sparse_values"),
+        pybind11::arg("sparse_metadata"),
+        pybind11::arg("d"),
+        pybind11::arg("block_n"),
+        pybind11::arg("block_m"));
+    m.def(
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x64",
+        &hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x64,
         pybind11::arg("a"),
         pybind11::arg("block_selector"),
         pybind11::arg("dense_values"),
