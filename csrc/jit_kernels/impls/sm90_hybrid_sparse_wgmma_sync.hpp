@@ -118,7 +118,13 @@ void hybrid_sparse_dense_wgmma_sync(
         const int block_n, const int block_m) {
     __shared__ alignas(128) __nv_bfloat16 smem_weight[kBlock * kBlock];
     __shared__ alignas(128) __nv_bfloat16 smem_activation[kBlock * kBlock];
-    const DenseSmemLayout smem_layout;
+    auto weight_tensor = cute::make_tensor(
+        cute::make_smem_ptr(smem_weight), DenseSmemLayout{});
+    auto activation_tensor = cute::make_tensor(
+        cute::make_smem_ptr(smem_activation), DenseSmemLayout{});
+    auto weight_store = cute::as_position_independent_swizzle_tensor(weight_tensor);
+    auto activation_store =
+        cute::as_position_independent_swizzle_tensor(activation_tensor);
     const int output_tile_m = static_cast<int>(blockIdx.x) * kBlock;
     const int output_tile_n = static_cast<int>(blockIdx.y) * kBlock;
     const int block_row = output_tile_n / kBlock;
@@ -142,10 +148,9 @@ void hybrid_sparse_dense_wgmma_sync(
                  linear < kBlock * kBlock; linear += kThreads) {
                 const int row = linear / kBlock;
                 const int column = linear % kBlock;
-                const int smem_offset = smem_layout(row, column);
-                smem_weight[smem_offset] = dense_values[weight_base + linear];
+                weight_store(row, column) = dense_values[weight_base + linear];
                 const int row_m = output_tile_m + row;
-                smem_activation[smem_offset] = row_m < m ? activation[
+                activation_store(row, column) = row_m < m ? activation[
                     static_cast<long long>(row_m) * k + block_k + column] :
                     __float2bfloat16_rn(0.0f);
             }
@@ -182,8 +187,13 @@ void hybrid_sparse_2_4_wgmma_sync(
         const int block_n, const int block_m) {
     __shared__ alignas(128) __nv_bfloat16 smem_weight[kBlock * (kBlock / 2)];
     __shared__ alignas(128) __nv_bfloat16 smem_activation[kBlock * kBlock];
-    const SparseSmemLayout sparse_layout;
-    const DenseSmemLayout activation_layout;
+    auto weight_tensor = cute::make_tensor(
+        cute::make_smem_ptr(smem_weight), SparseSmemLayout{});
+    auto activation_tensor = cute::make_tensor(
+        cute::make_smem_ptr(smem_activation), DenseSmemLayout{});
+    auto weight_store = cute::as_position_independent_swizzle_tensor(weight_tensor);
+    auto activation_store =
+        cute::as_position_independent_swizzle_tensor(activation_tensor);
     const int output_tile_m = static_cast<int>(blockIdx.x) * kBlock;
     const int output_tile_n = static_cast<int>(blockIdx.y) * kBlock;
     const int block_row = output_tile_n / kBlock;
@@ -212,15 +222,14 @@ void hybrid_sparse_2_4_wgmma_sync(
                  linear < kBlock * (kBlock / 2); linear += kThreads) {
                 const int row = linear / (kBlock / 2);
                 const int column = linear % (kBlock / 2);
-                smem_weight[sparse_layout(row, column)] =
-                    sparse_values[values_base + linear];
+                weight_store(row, column) = sparse_values[values_base + linear];
             }
             for (int linear = static_cast<int>(threadIdx.x);
                  linear < kBlock * kBlock; linear += kThreads) {
                 const int row = linear / kBlock;
                 const int column = linear % kBlock;
                 const int row_m = output_tile_m + row;
-                smem_activation[activation_layout(row, column)] = row_m < m ?
+                activation_store(row, column) = row_m < m ?
                     activation[static_cast<long long>(row_m) * k + block_k + column] :
                     __float2bfloat16_rn(0.0f);
             }
