@@ -284,7 +284,7 @@ void hybrid_sparse_2_4_wgmma_tma_block128x128(
                     const int packed_block =
                         (block_row * block_groups + block_group) * block_n +
                         sparse_slot;
-                    deep_gemm::tma::copy<64, 128, 128, cutlass::bfloat16_t>(
+                    deep_gemm::tma::copy<64, 128, 64, cutlass::bfloat16_t>(
                         &tensor_map_sparse, &full_barrier[stage],
                         reinterpret_cast<cutlass::bfloat16_t*>(smem_weight(stage)),
                         0, packed_block * kBlockH);
@@ -345,8 +345,8 @@ void hybrid_sparse_2_4_wgmma_tma_block128x128(
                         }
                     }
                     const auto desc_a = deep_gemm::mma::sm90::make_smem_desc(
-                        smem_weight(stage) +
-                            n_tile * 64 * (kBlockW / 2) + k_tile * 16,
+                        smem_weight(stage) + (k_tile / 2) * kBlockH * 32 +
+                            n_tile * 64 * 32 + (k_tile % 2) * 16,
                         static_cast<int>(cute::GMMA::LayoutType::B64), 0, 512);
                     const auto desc_b = deep_gemm::mma::sm90::make_smem_desc(
                         smem_activation(stage) + (k_tile / 2) * kTileM * 64 +

@@ -84,7 +84,7 @@ static void sm90_hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x128(
         128, 128, 128, 128) : tensor_map_activation;
     const auto tensor_map_sparse = make_tma_2d_desc(
         sparse_values, 64, block_rows * block_groups * block_n * 128,
-        64, 128, 64, 128);
+        64, 128, 64, 64);
     const auto grid = std::make_pair((m + 63) / 64, (n + 127) / 128);
     auto args = SM90HybridSparseWgmmaTmaBlock128x128Runtime::Args {
         .kernel = HybridSparseWgmmaTmaBlock128x128Kernel::Dense,
