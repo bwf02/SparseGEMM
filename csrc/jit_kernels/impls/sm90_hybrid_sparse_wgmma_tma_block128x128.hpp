@@ -45,7 +45,7 @@ public:
                 HybridSparseWgmmaTmaBlock128x128Kernel::Reduce
             ? "#include <deep_gemm/impls/sm90_hybrid_sparse_reduce64_block128x128.cuh>\n"
             : "#include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_block128x128.cuh>\n";
-        return std::string(include) + R"(
+        return std::string(include) + std::string(R"(
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&)") + symbol + R"(<>);
     (void)ptr;
