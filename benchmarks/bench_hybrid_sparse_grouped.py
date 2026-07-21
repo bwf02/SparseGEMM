@@ -199,7 +199,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experts", type=int, default=8)
     parser.add_argument("--tokens-per-expert", type=int, default=8)
-    parser.add_argument("--max-m", type=int, default=16)
+    parser.add_argument(
+        "--max-m",
+        type=int,
+        default=64,
+        help="masked activation capacity; DeepGEMM SM90 baseline requires at least 64",
+    )
     parser.add_argument("--n", type=int, default=1408)
     parser.add_argument("--k", type=int, default=2048)
     parser.add_argument("--block-n", type=int, default=1)
@@ -211,6 +216,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--experts and --tokens-per-expert must be positive")
     if args.max_m < args.tokens_per_expert:
         parser.error("--max-m must be at least --tokens-per-expert")
+    if args.max_m < 64:
+        parser.error("--max-m must be at least 64 for the DeepGEMM SM90 baseline")
     if args.num_tests <= 0:
         parser.error("--num-tests must be positive")
     return args
