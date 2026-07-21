@@ -209,14 +209,20 @@ extern "C" __global__ void hybrid_sparse_2_4_tensorcore(
                     }
                     unsigned hardware_metadata = 0;
                     if (thread_in_group < 2) {
-                        const int metadata_row = row_base + group +
-                                                 (thread_in_group ? 8 : 0);
+                        const int metadata_row = row_base + group;
+                        const int quartet_base = thread_in_group * 4;
 #pragma unroll
-                        for (int quartet = 0; quartet < 8; ++quartet) {
-                            const unsigned char code = sparse_metadata[
+                        for (int quartet = 0; quartet < 4; ++quartet) {
+                            const unsigned char lower_code = sparse_metadata[
                                 metadata_base + static_cast<long long>(metadata_row) *
-                                (kBlock / 4) + k_tile * 8 + quartet];
-                            hardware_metadata |= metadata_nibble(code) << (quartet * 4);
+                                (kBlock / 4) + k_tile * 8 + quartet_base + quartet];
+                            const unsigned char upper_code = sparse_metadata[
+                                metadata_base + static_cast<long long>(metadata_row + 8) *
+                                (kBlock / 4) + k_tile * 8 + quartet_base + quartet];
+                            hardware_metadata |=
+                                metadata_nibble(lower_code) << (quartet * 4);
+                            hardware_metadata |=
+                                metadata_nibble(upper_code) << ((quartet + 4) * 4);
                         }
                     }
                     mma_sparse_bf16(accumulator, weight_fragment,
