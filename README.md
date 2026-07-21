@@ -79,6 +79,16 @@ sparse-to-dense conversion plus Torch references for normal, M-grouped
 contiguous, and M-grouped masked GEMM. Importing this package does not load the
 CUDA extension.
 
+Terminology for hybrid sparse development:
+
+- `weight block size` means the sparse weight format block, currently
+  represented by `block_h x block_w`. The `block_h` dimension is the weight row
+  or output-channel dimension.
+- `CUDA tile size` means the kernel scheduling tile. When comparing tile size
+  with weight block size, use the kernel tile's output-channel dimension.
+- Future hybrid sparse kernels should keep the CUDA tile output-channel
+  dimension equal to the sparse weight block row dimension.
+
 ```python
 from sparse_gemm.hybrid_sparse import (
     HybridBlockSparseLayout,

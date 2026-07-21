@@ -1,5 +1,14 @@
 # Hybrid Sparse Tensor Core Performance
 
+## Terminology
+
+- `weight block size` refers to the hybrid sparse weight format block,
+  represented by `block_h x block_w`. Here `block_h` is the weight row or
+  output-channel dimension, and `block_w` is the K dimension.
+- `CUDA tile size` refers to the kernel scheduling tile. For later tile-size
+  experiments, the CUDA tile output-channel dimension must match the weight
+  block row dimension.
+
 ## Warp MMA Configuration
 
 - GPU: NVIDIA H20
