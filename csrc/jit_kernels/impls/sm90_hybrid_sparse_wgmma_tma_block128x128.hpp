@@ -109,7 +109,8 @@ static void sm90_hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x128(
         SM90HybridSparseWgmmaTmaBlock128x128Runtime::generate(args));
     SM90HybridSparseWgmmaTmaBlock128x128Runtime::launch(sparse_runtime, args);
     args.kernel = HybridSparseWgmmaTmaBlock128x128Kernel::Reduce;
-    args.launch_args = LaunchArgs(grid, 256);
+    const auto reduce_grid = std::make_pair((m + 63) / 64, (n + 63) / 64);
+    args.launch_args = LaunchArgs(reduce_grid, 256);
     const auto reduce_runtime = compiler->build(
         "sm90_hybrid_sparse_reduce_wgmma_tma_block128x128",
         SM90HybridSparseWgmmaTmaBlock128x128Runtime::generate(args));

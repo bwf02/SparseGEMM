@@ -17,6 +17,7 @@
 constexpr int kBlockH = 128;
 constexpr int kBlockW = 128;
 constexpr int kTileM = 64;
+constexpr int kReduceTileN = 64;
 constexpr int kStages = 2;
 constexpr int kMathThreads = 128;
 constexpr int kThreads = 256;
@@ -384,11 +385,11 @@ __global__ void hybrid_sparse_reduce_wgmma_tma_block128x128(
         const cute::TmaDescriptor, const int m, const int n, const int,
         const int, const int) {
     const int tile_m = static_cast<int>(blockIdx.x) * kTileM;
-    const int tile_n = static_cast<int>(blockIdx.y) * kBlockH;
-    for (int linear = static_cast<int>(threadIdx.x); linear < kTileM * kBlockH;
+    const int tile_n = static_cast<int>(blockIdx.y) * kReduceTileN;
+    for (int linear = static_cast<int>(threadIdx.x); linear < kTileM * kReduceTileN;
          linear += static_cast<int>(blockDim.x)) {
-        const int row_m = tile_m + linear / kBlockH;
-        const int row_n = tile_n + linear % kBlockH;
+        const int row_m = tile_m + linear / kReduceTileN;
+        const int row_n = tile_n + linear % kReduceTileN;
         if (row_m < m && row_n < n) {
             const long long index = static_cast<long long>(row_m) * n + row_n;
             output[index] = __float2bfloat16_rn(
