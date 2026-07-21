@@ -31,9 +31,11 @@ public:
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 #include <cutlass/arch/barrier.h>
+#include <cute/atom/mma_traits_sm90_gmma.hpp>
 #include <cute/arch/copy_sm90_desc.hpp>
 #include <cute/arch/copy_sm90_tma.hpp>
 #include <cute/arch/mma_sm90_gmma_sparse.hpp>
+#include <cute/tensor.hpp>
 #include <deep_gemm/common/tma_copy.cuh>
 #include <deep_gemm/mma/sm90.cuh>
 #include <deep_gemm/ptx/wgmma.cuh>
