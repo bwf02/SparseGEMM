@@ -14,6 +14,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma,
     hybrid_block_sparse_gemm_wgmma_tma_block128x32,
     hybrid_block_sparse_gemm_wgmma_tma_block128x64,
+    hybrid_block_sparse_gemm_wgmma_tma_block128x128,
 )
 
 
@@ -54,6 +55,16 @@ VARIANTS = (
             "hybrid_sparse_dense_wgmma_tma_block128x64",
             "hybrid_sparse_2_4_wgmma_tma_block128x64",
             "hybrid_sparse_reduce_wgmma_tma_block128x64",
+        ),
+    ),
+    Variant(
+        "block128x128",
+        HybridBlockSparseLayout(128, 128, 1, 2),
+        hybrid_block_sparse_gemm_wgmma_tma_block128x128,
+        (
+            "hybrid_sparse_dense_wgmma_tma_block128x128",
+            "hybrid_sparse_2_4_wgmma_tma_block128x128",
+            "hybrid_sparse_reduce_wgmma_tma_block128x128",
         ),
     ),
 )

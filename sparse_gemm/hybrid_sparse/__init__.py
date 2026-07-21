@@ -19,6 +19,7 @@ from .kernel import (
     hybrid_block_sparse_gemm_wgmma_tma_128x64,
     hybrid_block_sparse_gemm_wgmma_tma_block128x32,
     hybrid_block_sparse_gemm_wgmma_tma_block128x64,
+    hybrid_block_sparse_gemm_wgmma_tma_block128x128,
     hybrid_block_sparse_grouped_contiguous_naive,
     hybrid_block_sparse_grouped_masked_naive,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "hybrid_block_sparse_gemm_wgmma_tma_128x64",
     "hybrid_block_sparse_gemm_wgmma_tma_block128x32",
     "hybrid_block_sparse_gemm_wgmma_tma_block128x64",
+    "hybrid_block_sparse_gemm_wgmma_tma_block128x128",
     "hybrid_block_sparse_grouped_contiguous_naive",
     "hybrid_block_sparse_grouped_contiguous_ref",
     "hybrid_block_sparse_grouped_masked_naive",

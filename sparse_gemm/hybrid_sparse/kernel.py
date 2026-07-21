@@ -383,6 +383,22 @@ def hybrid_block_sparse_gemm_wgmma_tma_block128x64(
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_block128x128(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 128x128 weight-block TMA and WGMMA BF16 implementation."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x128",
+        block_h=128,
+        block_w=128,
+    )
+
+
 def hybrid_block_sparse_grouped_contiguous_naive(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
