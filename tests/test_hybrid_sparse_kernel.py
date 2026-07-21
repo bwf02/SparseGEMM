@@ -6,6 +6,7 @@ from sparse_gemm.hybrid_sparse import (
     HybridBlockSparseLayout,
     dense_to_hybrid_block_sparse,
     hybrid_block_sparse_gemm_naive,
+    hybrid_block_sparse_gemm_tensorcore,
     hybrid_block_sparse_gemm_ref,
     hybrid_block_sparse_grouped_contiguous_naive,
     hybrid_block_sparse_grouped_contiguous_ref,
@@ -39,6 +40,26 @@ def make_grouped_mask(weight, layout, sparse_block_ids):
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
 class TestHybridSparseNaiveKernel(unittest.TestCase):
+    def test_tensorcore_matches_reference_for_all_metadata_pairs(self):
+        torch.manual_seed(100)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(64, 128, device="cuda", dtype=torch.bfloat16)
+        mask = torch.zeros_like(weight, dtype=torch.bool)
+        pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+        sparse_block = mask[:, :64].reshape(64, 16, 4)
+        for quartet in range(16):
+            keep = pairs[quartet % len(pairs)]
+            sparse_block[:, quartet, :] = True
+            sparse_block[:, quartet, keep[0]] = False
+            sparse_block[:, quartet, keep[1]] = False
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+        activation = torch.randn(73, 128, device="cuda", dtype=torch.bfloat16)
+
+        expected = hybrid_block_sparse_gemm_ref(activation, packed)
+        actual = hybrid_block_sparse_gemm_tensorcore(activation, packed)
+
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
     def test_matches_reference_for_one_of_two_blocks(self):
         torch.manual_seed(101)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)
