@@ -94,6 +94,19 @@ output = hybrid_block_sparse_gemm_ref(activation, packed_weight)
 For a Python-only installation, set `DG_SKIP_CUDA_BUILD=1` while installing.
 The CUDA kernels will use the same public format and reference API.
 
+The first correctness-oriented Hopper kernel is available as
+`hybrid_block_sparse_gemm_naive`. It currently supports BF16 normal GEMM with
+64x64 hybrid blocks. The implementation launches separate dense-block and
+2:4-block scalar CUDA kernels into FP32 partial outputs, then launches a third
+kernel to reduce and cast to BF16. It intentionally does not use Tensor Cores,
+TMA, warp specialization, or software pipelining.
+
+```python
+from sparse_gemm.hybrid_sparse import hybrid_block_sparse_gemm_naive
+
+output = hybrid_block_sparse_gemm_naive(activation_bf16, packed_weight)
+```
+
 #### Normal dense GEMMs (non-grouped)
 
 To perform a basic non-grouped FP8 GEMM, call the `fp8_gemm_{nt, nn, tn, tt}` function. For more details, please refer to the function documentation.
