@@ -34,16 +34,18 @@ public:
             case HybridSparseWgmmaTmaBlock128x128Kernel::Sparse:
                 return "hybrid_sparse_2_4_wgmma_tma_block128x128";
             case HybridSparseWgmmaTmaBlock128x128Kernel::Reduce:
-                return "hybrid_sparse_reduce_wgmma_tma_block128x128";
+                return "hybrid_sparse_reduce64_wgmma_tma_block128x128";
         }
         DG_HOST_UNREACHABLE("Unknown hybrid sparse WGMMA TMA kernel");
     }
 
     static std::string generate_impl(const Args& args) {
         const char* symbol = kernel_symbol(args.kernel);
-        return std::string(R"(
-#include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_block128x128.cuh>
-
+        const char* include = args.kernel ==
+                HybridSparseWgmmaTmaBlock128x128Kernel::Reduce
+            ? "#include <deep_gemm/impls/sm90_hybrid_sparse_reduce64_block128x128.cuh>\n"
+            : "#include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_block128x128.cuh>\n";
+        return std::string(include) + R"(
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&)") + symbol + R"(<>);
     (void)ptr;
