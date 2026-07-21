@@ -54,3 +54,44 @@ compute kernel and `111.2 us` for the sparse compute kernel. Both have about
 correctness, but synchronous staging and a wait after every block leave the
 Tensor Cores underutilized. TMA staging and mainloop overlap are required in
 the next version.
+
+## TMA WGMMA Results
+
+The current best version uses a two-stage TMA pipeline with one producer
+warpgroup and one WGMMA consumer warpgroup. Dense and sparse blocks remain
+separate kernels, followed by FP32 partial reduction. SASS contains
+`UTMALDG.2D`, `HGMMA.64x64x16.F32.BF16`, and
+`HGMMA.SP.64x64x32.F32.BF16`. Timing uses 20 measurements with L2 flush.
+
+| M | N | K | TMA WGMMA (us) | DeepGEMM (us) | Effective TFLOPS | Relative to DeepGEMM | Latency gap |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1408 | 2048 | 29.9 | 8.5 | 0.19 | 28.5% | 3.52x |
+| 1 | 2048 | 1408 | 23.1 | 7.7 | 0.25 | 33.3% | 3.00x |
+| 8 | 1408 | 2048 | 30.6 | 8.6 | 1.51 | 28.3% | 3.56x |
+| 8 | 2048 | 1408 | 23.5 | 7.7 | 1.97 | 32.7% | 3.05x |
+| 32 | 1408 | 2048 | 32.0 | 8.7 | 5.77 | 27.2% | 3.68x |
+| 32 | 2048 | 1408 | 24.7 | 7.8 | 7.46 | 31.4% | 3.17x |
+| 128 | 1408 | 2048 | 33.9 | 11.1 | 21.78 | 32.7% | 3.05x |
+| 128 | 2048 | 1408 | 26.5 | 10.3 | 27.81 | 38.7% | 2.57x |
+
+At `M=128, N=1408, K=2048`, NCU reports about `12.0 us` for the
+dense path and `19.49 us` for the sparse path. Active warps remain about
+`8%`; sparse long-scoreboard stalls are `46%`, so sparse metadata and data
+arrival latency remain the primary mainloop bottleneck.
+
+## Tile Experiment
+
+The preserved `128 x 64` variant reuses each weight tile across two 64-row
+activation subtiles. It passes the same metadata and M-tail correctness tests,
+but is slower than `64 x 64` for every measured shape from `M=1` through
+`M=512`. At `M=128, N=1408, K=2048`, latency rises from `33.9 us` to
+`46.9 us`; NCU reports `16.99 us` dense and `24.29 us` sparse. Halving the CTA
+count and doubling accumulator pressure outweigh weight reuse.
+
+With the current mapping, WGMMA's fixed `m64` dimension corresponds to 64
+output channels. A true `128 x 32` output tile would compute and discard half
+of each WGMMA result. A `128 x 128` CTA can compose two independent 64-row
+weight block-rows, but their hybrid selectors differ, so it cannot generally
+reuse packed weights and requires roughly twice the accumulator state. These
+shapes are therefore not candidates for the default kernel under the current
+`64 x 64` block format.

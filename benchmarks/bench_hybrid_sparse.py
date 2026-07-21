@@ -80,6 +80,10 @@ def qwen_moe_shapes(ms: Iterable[int]) -> list[Shape]:
     ]
 
 
+def safe_divide(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator else float("nan")
+
+
 def benchmark_shape(
     shape: Shape,
     layout: HybridBlockSparseLayout,
@@ -179,8 +183,10 @@ def benchmark_shape(
     wgmma_tma_128x64_time = sum(wgmma_tma_128x64_times)
     dense_flops = 2 * shape.m * shape.n * shape.k
     executed_flops = dense_flops * (1.0 - layout.sparsity)
-    tma64_to_128 = wgmma_tma_time / wgmma_tma_128x64_time
-    dense_speedup = deepgemm_time / wgmma_tma_128x64_time
+    tma64_to_128 = safe_divide(wgmma_tma_time, wgmma_tma_128x64_time)
+    dense_speedup = safe_divide(deepgemm_time, wgmma_tma_time)
+    effective_tflops = safe_divide(dense_flops, wgmma_tma_time) / 1e12
+    executed_tflops = safe_divide(executed_flops, wgmma_tma_time) / 1e12
 
     print(
         f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
@@ -191,11 +197,11 @@ def benchmark_shape(
         f"{wgmma_tma_128x64_time * 1e6:10.1f} "
         f"{deepgemm_time * 1e6:11.1f} "
         f"{tma64_to_128:9.3f}x {dense_speedup:7.3f}x | "
-        f"{dense_flops / wgmma_tma_128x64_time / 1e12:9.2f} "
-        f"{executed_flops / wgmma_tma_128x64_time / 1e12:10.2f} | "
-        f"{wgmma_tma_128x64_times[0] * 1e6:8.1f} "
-        f"{wgmma_tma_128x64_times[1] * 1e6:9.1f} "
-        f"{wgmma_tma_128x64_times[2] * 1e6:8.1f}"
+        f"{effective_tflops:9.2f} "
+        f"{executed_tflops:10.2f} | "
+        f"{wgmma_tma_times[0] * 1e6:8.1f} "
+        f"{wgmma_tma_times[1] * 1e6:9.1f} "
+        f"{wgmma_tma_times[2] * 1e6:8.1f}"
     )
 
 
@@ -248,7 +254,7 @@ def main() -> None:
     print("Timing: CUDA kernel time from bench_kineto; packing is excluded")
     print(
         "     M      N      K | naive(us) mma(us) sync(us) tma64(us) tma128x64(us) "
-        "deepgemm(us) t64/t128 dg/t128 | t128-eff-TF t128-exec-TF | "
+        "deepgemm(us) t64/t128 dg/t64 | t64-eff-TF t64-exec-TF | "
         "dense(us) sparse(us) reduce(us)"
     )
     for shape in shapes:
