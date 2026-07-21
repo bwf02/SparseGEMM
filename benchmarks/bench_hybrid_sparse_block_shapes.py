@@ -64,7 +64,7 @@ VARIANTS = (
         (
             "hybrid_sparse_dense_wgmma_tma_block128x128",
             "hybrid_sparse_2_4_wgmma_tma_block128x128",
-            "hybrid_sparse_reduce_wgmma_tma_block128x128",
+            "hybrid_sparse_reduce64_wgmma_tma_block128x128",
         ),
     ),
 )
