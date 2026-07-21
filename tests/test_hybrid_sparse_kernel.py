@@ -60,6 +60,31 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
 
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
 
+    def test_tensorcore_matches_reference_for_row_varying_metadata(self):
+        torch.manual_seed(102)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(128, 256, device="cuda", dtype=torch.bfloat16)
+        mask = torch.zeros_like(weight, dtype=torch.bool)
+        pairs = torch.tensor(
+            ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+            device="cuda",
+        )
+        for block_row in range(2):
+            sparse_block = mask[
+                block_row * 64 : (block_row + 1) * 64, :64
+            ].reshape(64, 16, 4)
+            sparse_block[:] = True
+            pair_ids = torch.randint(0, len(pairs), (64, 16), device="cuda")
+            keep = pairs[pair_ids]
+            sparse_block.scatter_(2, keep, False)
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+        activation = torch.randn(65, 256, device="cuda", dtype=torch.bfloat16)
+
+        expected = hybrid_block_sparse_gemm_ref(activation, packed)
+        actual = hybrid_block_sparse_gemm_tensorcore(activation, packed)
+
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
     def test_matches_reference_for_one_of_two_blocks(self):
         torch.manual_seed(101)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)

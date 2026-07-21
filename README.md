@@ -107,6 +107,12 @@ from sparse_gemm.hybrid_sparse import hybrid_block_sparse_gemm_naive
 output = hybrid_block_sparse_gemm_naive(activation_bf16, packed_weight)
 ```
 
+The synchronous Tensor Core baseline is available as
+`hybrid_block_sparse_gemm_tensorcore`. It uses separate dense `mma.sync` and
+2:4 `mma.sp.sync` kernels followed by the same FP32 partial reduction. This
+baseline uses direct global-to-register loads and intentionally has no TMA,
+`cp.async`, multistage pipeline, or overlap.
+
 Benchmark this kernel against DeepGEMM BF16 with the repository's
 `bench_kineto` timing utility:
 

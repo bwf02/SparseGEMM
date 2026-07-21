@@ -1,4 +1,4 @@
-"""Benchmark the naive hybrid sparse GEMM against DeepGEMM BF16 GEMM."""
+"""Benchmark scalar and Tensor Core hybrid sparse GEMM against DeepGEMM."""
 
 import argparse
 from dataclasses import dataclass
@@ -12,6 +12,7 @@ from sparse_gemm.hybrid_sparse import (
     HybridBlockSparseLayout,
     dense_to_hybrid_block_sparse,
     hybrid_block_sparse_gemm_naive,
+    hybrid_block_sparse_gemm_tensorcore,
 )
 
 
@@ -19,6 +20,11 @@ HYBRID_KERNEL_NAMES = (
     "hybrid_sparse_dense_naive",
     "hybrid_sparse_2_4_naive",
     "hybrid_sparse_reduce_naive",
+)
+TENSORCORE_KERNEL_NAMES = (
+    "hybrid_sparse_dense_tensorcore",
+    "hybrid_sparse_2_4_tensorcore",
+    "hybrid_sparse_reduce_tensorcore",
 )
 
 
@@ -74,16 +80,28 @@ def benchmark_shape(
     hybrid_out = torch.empty(
         shape.m, shape.n, device="cuda", dtype=torch.bfloat16
     )
+    tensorcore_out = torch.empty_like(hybrid_out)
     deepgemm_out = torch.empty_like(hybrid_out)
 
     hybrid_block_sparse_gemm_naive(a, packed_weight, out=hybrid_out)
+    hybrid_block_sparse_gemm_tensorcore(a, packed_weight, out=tensorcore_out)
     deep_gemm.bf16_gemm_nt(a, dense_weight, deepgemm_out)
     torch.cuda.synchronize()
     torch.testing.assert_close(hybrid_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(tensorcore_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     hybrid_times = bench_kineto(
         lambda: hybrid_block_sparse_gemm_naive(a, packed_weight, out=hybrid_out),
         HYBRID_KERNEL_NAMES,
+        num_tests=num_tests,
+        suppress_kineto_output=True,
+        flush_l2=flush_l2,
+    )
+    tensorcore_times = bench_kineto(
+        lambda: hybrid_block_sparse_gemm_tensorcore(
+            a, packed_weight, out=tensorcore_out
+        ),
+        TENSORCORE_KERNEL_NAMES,
         num_tests=num_tests,
         suppress_kineto_output=True,
         flush_l2=flush_l2,
@@ -97,21 +115,23 @@ def benchmark_shape(
     )
 
     hybrid_time = sum(hybrid_times)
+    tensorcore_time = sum(tensorcore_times)
     dense_flops = 2 * shape.m * shape.n * shape.k
     executed_flops = dense_flops * (1.0 - layout.sparsity)
-    speedup = deepgemm_time / hybrid_time
+    naive_speedup = hybrid_time / tensorcore_time
+    dense_speedup = deepgemm_time / tensorcore_time
 
     print(
         f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
-        f"{hybrid_time * 1e6:10.1f} "
+        f"{hybrid_time * 1e6:9.1f} "
+        f"{tensorcore_time * 1e6:7.1f} "
         f"{deepgemm_time * 1e6:11.1f} "
-        f"{speedup:8.3f}x | "
-        f"{dense_flops / hybrid_time / 1e12:10.2f} "
-        f"{executed_flops / hybrid_time / 1e12:10.2f} "
-        f"{dense_flops / deepgemm_time / 1e12:10.2f} | "
-        f"{hybrid_times[0] * 1e6:8.1f} "
-        f"{hybrid_times[1] * 1e6:8.1f} "
-        f"{hybrid_times[2] * 1e6:8.1f}"
+        f"{naive_speedup:8.3f}x {dense_speedup:8.3f}x | "
+        f"{dense_flops / tensorcore_time / 1e12:9.2f} "
+        f"{executed_flops / tensorcore_time / 1e12:10.2f} | "
+        f"{tensorcore_times[0] * 1e6:8.1f} "
+        f"{tensorcore_times[1] * 1e6:9.1f} "
+        f"{tensorcore_times[2] * 1e6:8.1f}"
     )
 
 
@@ -163,8 +183,8 @@ def main() -> None:
     )
     print("Timing: CUDA kernel time from bench_kineto; packing is excluded")
     print(
-        "     M      N      K | hybrid(us) deepgemm(us)  speedup | "
-        "hyb-eff-TF hyb-exec-TF   dg-TFLOPS | dense(us) sparse(us) reduce(us)"
+        "     M      N      K | naive(us)  tc(us) deepgemm(us) "
+        "naive/tc    dg/tc | tc-eff-TF tc-exec-TF | dense(us) sparse(us) reduce(us)"
     )
     for shape in shapes:
         benchmark_shape(
