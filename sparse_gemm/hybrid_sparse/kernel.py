@@ -258,12 +258,12 @@ def hybrid_block_sparse_gemm_wgmma_sync(
     return out
 
 
-def hybrid_block_sparse_gemm_wgmma_tma(
+def _hybrid_block_sparse_gemm_wgmma_tma(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
-    out: Optional[torch.Tensor] = None,
+    out: Optional[torch.Tensor],
+    binding: str,
 ) -> torch.Tensor:
-    """Run the two-stage TMA and warpgroup WGMMA BF16 implementation on Hopper."""
     if not isinstance(packed_weight, HybridBlockSparseWeight):
         raise TypeError("packed_weight must be a HybridBlockSparseWeight")
     if len(packed_weight.original_shape) != 2:
@@ -303,7 +303,7 @@ def hybrid_block_sparse_gemm_wgmma_tma(
 
     import deep_gemm
 
-    deep_gemm._C.hybrid_block_sparse_bf16_gemm_wgmma_tma(
+    getattr(deep_gemm._C, binding)(
         a,
         packed_weight.block_selector,
         packed_weight.dense_values,
@@ -314,6 +314,34 @@ def hybrid_block_sparse_gemm_wgmma_tma(
         packed_weight.layout.block_m,
     )
     return out
+
+
+def hybrid_block_sparse_gemm_wgmma_tma(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 64x64 two-stage TMA and WGMMA BF16 implementation on Hopper."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma",
+    )
+
+
+def hybrid_block_sparse_gemm_wgmma_tma_128x64(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 128x64 two-stage TMA and WGMMA BF16 implementation on Hopper."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_128x64",
+    )
 
 
 def hybrid_block_sparse_grouped_contiguous_naive(
