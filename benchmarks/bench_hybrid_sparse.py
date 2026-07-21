@@ -14,6 +14,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_naive,
     hybrid_block_sparse_gemm_tensorcore,
     hybrid_block_sparse_gemm_wgmma_sync,
+    hybrid_block_sparse_gemm_wgmma_tma,
 )
 
 
@@ -31,6 +32,11 @@ WGMMA_SYNC_KERNEL_NAMES = (
     "hybrid_sparse_dense_wgmma_sync",
     "hybrid_sparse_2_4_wgmma_sync",
     "hybrid_sparse_reduce_wgmma_sync",
+)
+WGMMA_TMA_KERNEL_NAMES = (
+    "hybrid_sparse_dense_wgmma_tma",
+    "hybrid_sparse_2_4_wgmma_tma",
+    "hybrid_sparse_reduce_wgmma_tma",
 )
 
 
@@ -88,16 +94,19 @@ def benchmark_shape(
     )
     tensorcore_out = torch.empty_like(hybrid_out)
     wgmma_sync_out = torch.empty_like(hybrid_out)
+    wgmma_tma_out = torch.empty_like(hybrid_out)
     deepgemm_out = torch.empty_like(hybrid_out)
 
     hybrid_block_sparse_gemm_naive(a, packed_weight, out=hybrid_out)
     hybrid_block_sparse_gemm_tensorcore(a, packed_weight, out=tensorcore_out)
     hybrid_block_sparse_gemm_wgmma_sync(a, packed_weight, out=wgmma_sync_out)
+    hybrid_block_sparse_gemm_wgmma_tma(a, packed_weight, out=wgmma_tma_out)
     deep_gemm.bf16_gemm_nt(a, dense_weight, deepgemm_out)
     torch.cuda.synchronize()
     torch.testing.assert_close(hybrid_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(tensorcore_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(wgmma_sync_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(wgmma_tma_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     hybrid_times = bench_kineto(
         lambda: hybrid_block_sparse_gemm_naive(a, packed_weight, out=hybrid_out),
@@ -124,6 +133,15 @@ def benchmark_shape(
         suppress_kineto_output=True,
         flush_l2=flush_l2,
     )
+    wgmma_tma_times = bench_kineto(
+        lambda: hybrid_block_sparse_gemm_wgmma_tma(
+            a, packed_weight, out=wgmma_tma_out
+        ),
+        WGMMA_TMA_KERNEL_NAMES,
+        num_tests=num_tests,
+        suppress_kineto_output=True,
+        flush_l2=flush_l2,
+    )
     deepgemm_time = bench_kineto(
         lambda: deep_gemm.bf16_gemm_nt(a, dense_weight, deepgemm_out),
         "bf16_gemm",
@@ -135,23 +153,25 @@ def benchmark_shape(
     hybrid_time = sum(hybrid_times)
     tensorcore_time = sum(tensorcore_times)
     wgmma_sync_time = sum(wgmma_sync_times)
+    wgmma_tma_time = sum(wgmma_tma_times)
     dense_flops = 2 * shape.m * shape.n * shape.k
     executed_flops = dense_flops * (1.0 - layout.sparsity)
-    mma_to_wgmma = tensorcore_time / wgmma_sync_time
-    dense_speedup = deepgemm_time / wgmma_sync_time
+    sync_to_tma = wgmma_sync_time / wgmma_tma_time
+    dense_speedup = deepgemm_time / wgmma_tma_time
 
     print(
         f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
         f"{hybrid_time * 1e6:9.1f} "
         f"{tensorcore_time * 1e6:7.1f} "
         f"{wgmma_sync_time * 1e6:8.1f} "
+        f"{wgmma_tma_time * 1e6:7.1f} "
         f"{deepgemm_time * 1e6:11.1f} "
-        f"{mma_to_wgmma:8.3f}x {dense_speedup:8.3f}x | "
-        f"{dense_flops / wgmma_sync_time / 1e12:9.2f} "
-        f"{executed_flops / wgmma_sync_time / 1e12:10.2f} | "
-        f"{wgmma_sync_times[0] * 1e6:8.1f} "
-        f"{wgmma_sync_times[1] * 1e6:9.1f} "
-        f"{wgmma_sync_times[2] * 1e6:8.1f}"
+        f"{sync_to_tma:8.3f}x {dense_speedup:7.3f}x | "
+        f"{dense_flops / wgmma_tma_time / 1e12:9.2f} "
+        f"{executed_flops / wgmma_tma_time / 1e12:10.2f} | "
+        f"{wgmma_tma_times[0] * 1e6:8.1f} "
+        f"{wgmma_tma_times[1] * 1e6:9.1f} "
+        f"{wgmma_tma_times[2] * 1e6:8.1f}"
     )
 
 
@@ -203,8 +223,8 @@ def main() -> None:
     )
     print("Timing: CUDA kernel time from bench_kineto; packing is excluded")
     print(
-        "     M      N      K | naive(us) mma(us) wgmma(us) deepgemm(us) "
-        "mma/wgmma dg/wgmma | wg-eff-TF wg-exec-TF | dense(us) sparse(us) reduce(us)"
+        "     M      N      K | naive(us) mma(us) sync(us) tma(us) deepgemm(us) "
+        "sync/tma dg/tma | tma-eff-TF tma-exec-TF | dense(us) sparse(us) reduce(us)"
     )
     for shape in shapes:
         benchmark_shape(

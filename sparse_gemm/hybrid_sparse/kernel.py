@@ -258,6 +258,64 @@ def hybrid_block_sparse_gemm_wgmma_sync(
     return out
 
 
+def hybrid_block_sparse_gemm_wgmma_tma(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the two-stage TMA and warpgroup WGMMA BF16 implementation on Hopper."""
+    if not isinstance(packed_weight, HybridBlockSparseWeight):
+        raise TypeError("packed_weight must be a HybridBlockSparseWeight")
+    if len(packed_weight.original_shape) != 2:
+        raise ValueError("WGMMA TMA GEMM requires packed weight shape [N, K]")
+    if packed_weight.layout.block_h != 64 or packed_weight.layout.block_w != 64:
+        raise ValueError("WGMMA TMA GEMM currently requires block_h=block_w=64")
+    if a.dim() != 2:
+        raise ValueError(f"activation must have shape [M, K], got {tuple(a.shape)}")
+    if a.dtype != torch.bfloat16 or not a.is_cuda or not a.is_contiguous():
+        raise ValueError("activation must be contiguous BF16 on CUDA")
+
+    n, k = packed_weight.original_shape
+    if a.shape[1] != k:
+        raise ValueError(f"activation K ({a.shape[1]}) must match weight K ({k})")
+    packed_tensors = (
+        packed_weight.block_selector,
+        packed_weight.dense_values,
+        packed_weight.sparse_values,
+        packed_weight.sparse_metadata,
+    )
+    if packed_weight.dense_values.dtype != torch.bfloat16:
+        raise TypeError("packed weight values must have dtype torch.bfloat16")
+    if any(tensor.device != a.device for tensor in packed_tensors):
+        raise ValueError("all packed tensors must be on the activation device")
+    if any(not tensor.is_contiguous() for tensor in packed_tensors):
+        raise ValueError("all packed tensors must be contiguous")
+
+    if out is None:
+        out = torch.empty((a.shape[0], n), dtype=torch.bfloat16, device=a.device)
+    elif (
+        out.shape != (a.shape[0], n)
+        or out.dtype != torch.bfloat16
+        or out.device != a.device
+        or not out.is_contiguous()
+    ):
+        raise ValueError("out must be contiguous BF16 with shape [M, N] on CUDA")
+
+    import deep_gemm
+
+    deep_gemm._C.hybrid_block_sparse_bf16_gemm_wgmma_tma(
+        a,
+        packed_weight.block_selector,
+        packed_weight.dense_values,
+        packed_weight.sparse_values,
+        packed_weight.sparse_metadata,
+        out,
+        packed_weight.layout.block_n,
+        packed_weight.layout.block_m,
+    )
+    return out
+
+
 def hybrid_block_sparse_grouped_contiguous_naive(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
