@@ -5,9 +5,10 @@
 - `weight block size` refers to the hybrid sparse weight format block,
   represented by `block_h x block_w`. Here `block_h` is the weight row or
   output-channel dimension, and `block_w` is the K dimension.
-- `CUDA tile size` refers to the kernel scheduling tile. For later tile-size
-  experiments, the CUDA tile output-channel dimension must match the weight
-  block row dimension.
+- `weight tile size` is the logical weight-operand tile `tile_n x tile_k` and
+  must match `block_h x block_w`.
+- `output tile size` is the CTA scheduling tile `tile_m x tile_n`; it is not
+  required to match the weight block shape and may be tuned independently.
 
 ## Warp MMA Configuration
 

@@ -6,10 +6,14 @@
   represented by `block_h x block_w`.
 - `block_h` is the weight row or output-channel dimension.
 - `block_w` is the K dimension.
-- `CUDA tile size` refers to the kernel scheduling tile, not the sparse weight
-  storage block.
-- When tuning tile size against weight block size, keep the CUDA tile
-  output-channel dimension equal to the sparse weight block row dimension.
+- `weight tile size` refers to the kernel's logical weight-operand tile
+  `weight_tile_n x weight_tile_k`. Keep it equal to one sparse storage block:
+  `weight_tile_n == block_h` and `weight_tile_k == block_w`.
+- `output tile size` refers to the CTA scheduling tile
+  `output_tile_m x output_tile_n`. It is independent of the weight block shape;
+  do not require it to equal `block_h x block_w`.
+- Output M/N scheduling, warpgroup decomposition, pipeline stages, and the
+  number of weight tiles composed by a CTA may be tuned independently.
 
 ## Kernel Iteration
 
