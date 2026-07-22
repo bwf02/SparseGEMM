@@ -29,6 +29,10 @@ PREFETCH_KERNEL_NAMES = (
 STANDARD_M = (128, 256, 512, 1024, 2048, 4096)
 
 
+def safe_divide(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator else float("nan")
+
+
 def benchmark_shape(
     shape: Shape,
     layout: HybridBlockSparseLayout,
@@ -94,8 +98,11 @@ def benchmark_shape(
         f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
         f"{baseline_total * 1e6:9.2f} {prefetch_total * 1e6:12.2f} "
         f"{deepgemm_time * 1e6:11.2f} "
-        f"{baseline_total / prefetch_total:9.3f}x "
-        f"{deepgemm_time / prefetch_total:8.3f}x | "
+        f"{safe_divide(baseline_total, prefetch_total):9.3f}x "
+        f"{safe_divide(deepgemm_time, prefetch_total):8.3f}x | "
+        f"{baseline_times[0] * 1e6:9.2f} "
+        f"{baseline_times[1] * 1e6:10.2f} "
+        f"{baseline_times[2] * 1e6:9.2f} | "
         f"{prefetch_times[0] * 1e6:9.2f} "
         f"{prefetch_times[1] * 1e6:10.2f} "
         f"{prefetch_times[2] * 1e6:9.2f}"
@@ -141,7 +148,8 @@ def main() -> None:
     )
     print(
         "     M      N      K | baseline(us) prefetch(us) deepgemm(us) "
-        "base/pref dg/pref | dense(us) sparse(us) reduce(us)"
+        "base/pref dg/pref | baseline dense/sparse/reduce(us) | "
+        "prefetch dense/sparse/reduce(us)"
     )
     for shape in shapes:
         benchmark_shape(
