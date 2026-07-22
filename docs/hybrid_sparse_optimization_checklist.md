@@ -1,176 +1,29 @@
 # Hybrid Sparse Kernel Optimization Checklist
 
-## Status Convention
+勾选表示实验已经完成，不代表该方案最终被采用，详细数据与结论见
+[`hybrid_sparse_optimization_results.md`](hybrid_sparse_optimization_results.md)。
 
-- `[ ]`: not tested.
-- `[x]`: experiment completed. A checked item does not necessarily mean the
-  technique is retained; see its result and decision.
-- Each performance experiment should record the kernel version, workload,
-  latency, relevant NCU metrics, and final decision.
-- Keep every optimized kernel in a separate implementation file so completed
-  experiments remain reproducible.
+标准测试使用 NVIDIA H20、BF16/FP32 accumulation，以及
+`M = 128, 256, 512, 1024, 2048, 4096`。
 
-## Current Baseline
+## 待尝试
 
-- GPU: NVIDIA H20 (SM90).
-- Data type: BF16 input/output with FP32 accumulation.
-- Hybrid pattern: one 2:4 sparse weight block per two blocks (25% element
-  sparsity).
-- Preferred small-M configuration: `64 x 64` weight block and `64 x 64`
-  output tile.
-- Execution: separate dense and sparse kernels followed by FP32 reduction.
-- Pipeline: two-stage TMA producer/consumer pipeline.
-- Baseline: DeepGEMM BF16 dense GEMM on the zero-filled dense weight.
-- Standard benchmark sweep: `M = 128, 256, 512, 1024, 2048, 4096`.
-- For grouped GEMM, use total valid M matching the standard sweep where
-  practical.
-- Record new measurements and per-version decisions in
-  `hybrid_sparse_optimization_results.md`; keep the earlier performance document
-  unchanged as historical data.
+- [ ] **P0：预编码硬件 metadata**，在 weight conversion 阶段直接生成 lane-ready WGMMA.SP metadata，移除 mainloop 中的 byte-code 解码。
+- [ ] **P0：增加 TMA pipeline stage**，保持 `64 x 64` weight block 并依次测试 3、4、5 stage 的延迟和 occupancy。
+- [ ] **P0：合并多个 K tile**，先测试 `merge_k=2`，减少 WGMMA `commit_group/wait_group` 的执行频率。
+- [ ] **P0：重分配 warpgroup 寄存器**，减少 producer 寄存器并增加 math warpgroup 可用寄存器。
+- [ ] **P1：CTA tile swizzle**，调整 tile 调度顺序以提高 activation 或 weight 的 L2 复用率。
+- [ ] **P1：shape-aware dispatch**，小 M 使用 `64 x 64`，较大 M 根据实测选择 `128 x 128` 等版本。
+- [ ] **P1：grouped GEMM persistent scheduler**，让固定数量的 CTA 持续领取不均匀 expert tile。
+- [ ] **P2：融合 dense/sparse mainloop**，在同一 accumulator 中累加两条路径并移除 partial buffer 与 reduce kernel。
+- [ ] **P2：融合 STSM/TMA epilogue**，通过 shared-memory staging 和 TMA store 写出最终结果并尝试重叠下一 tile。
+- [ ] **P3：TMA multicast/CTA cluster**，仅在 operand 复用和并行 wave 足够时评估 cluster 共享收益。
 
-## P0: Mainloop Latency
+## 已完成
 
-- [ ] **Prepack hardware-ready sparse metadata**
-  - Generate lane-ready WGMMA.SP metadata during weight conversion.
-  - Remove byte-code decoding and metadata nibble construction from the CUDA
-    mainloop.
-  - Measure sparse-kernel latency, long-scoreboard stalls, and Tensor Core
-    utilization.
-  - Result: pending.
-
-- [ ] **Increase the TMA pipeline from two to four stages**
-  - Keep the `64 x 64` weight block and change only the stage count.
-  - Compare three, four, and five stages if four stages improves latency.
-  - Measure shared-memory usage, occupancy, barrier stalls, long scoreboard,
-    and total latency.
-  - Result: pending.
-
-- [ ] **Merge multiple K tiles before WGMMA commit/wait**
-  - Start with `merge_k = 2` and issue two K tiles before `commit_group` and
-    `wait_group`.
-  - Preserve each TMA stage until all dependent WGMMA operations complete.
-  - Measure wait stalls, Tensor Core utilization, and register pressure.
-  - Result: pending.
-
-- [ ] **Apply warpgroup register reallocation**
-  - Deallocate producer registers and allocate more registers to the math
-    warpgroup, following the DeepGEMM producer/consumer pattern.
-  - Test only after the deeper pipeline and merged K loop are correct.
-  - Result: pending.
-
-## P1: Scheduling And Shape Selection
-
-- [ ] **Add CTA tile swizzling for L2 locality**
-  - Group output tiles so adjacent CTAs reuse the same activation or weight
-    region through L2.
-  - Compare L2 hit rate and latency with the current two-dimensional order.
-  - Result: pending.
-
-- [ ] **Add shape-aware kernel dispatch**
-  - Retain `64 x 64` for small-M workloads.
-  - Consider `128 x 128` for larger M where its smaller sparse grid is no
-    longer the dominant limitation.
-  - Select the weight block, output tile, and pipeline stages from M/N/K and
-    available shared memory.
-  - Result: pending.
-
-- [ ] **Add a persistent scheduler for grouped GEMM**
-  - Launch approximately one CTA per SM and let each CTA consume multiple
-    expert tiles.
-  - Cover uneven token counts, empty experts, and grouped-layout alignment.
-  - Measure load balance and end-to-end grouped latency.
-  - Result: pending.
-
-- [ ] **Overlap epilogue/store with the next persistent tile**
-  - Stage output through shared memory and overlap TMA store with the next
-    tile's mainloop where dependencies permit.
-  - Result: pending.
-
-## P2: Kernel Fusion
-
-- [ ] **Fuse dense and sparse paths into one hybrid mainloop**
-  - Decode the shared block topology inside one CTA.
-  - Issue dense WGMMA or WGMMA.SP for each weight block into the same FP32
-    accumulators.
-  - Eliminate duplicated activation loads and the two partial-output buffers.
-  - Result: pending.
-
-- [ ] **Remove the standalone FP32 reduction kernel**
-  - Produce the final output in the fused hybrid kernel.
-  - Measure the reduction latency, launch overhead, and partial-buffer traffic
-    removed from the end-to-end path.
-  - Result: pending.
-
-- [ ] **Use STSM plus TMA for the fused epilogue**
-  - Store accumulators into swizzled shared memory, then issue a TMA store to
-    the final row-major output.
-  - Evaluate only with the fused hybrid mainloop.
-  - Result: pending.
-
-## P3: Advanced Hopper Features
-
-- [ ] **Evaluate TMA multicast and CTA clusters**
-  - Share activation tiles across adjacent N tiles or weight tiles across M
-    tiles.
-  - Enable only for shapes with enough waves and measurable operand reuse.
-  - Result: pending.
-
-- [ ] **Evaluate a persistent normal-GEMM path**
-  - Compare it with static scheduling only after the mainloop latency work.
-  - Do not expect it to increase parallelism for very small grids by itself.
-  - Result: pending.
-
-- [x] **Evaluate topology/metadata prefetching**
-  - Prefetch upcoming block selectors and sparse metadata independently from
-    the weight TMA pipeline.
-  - Measure long-scoreboard stalls and instruction overhead.
-  - Result: block-row metadata staging improved total latency by `6.6%` to
-    `15.1%` across the standard projection shapes. At M=512, sparse-kernel NCU
-    duration fell from `36.96 us` to `24.74 us`, and the previous `43.37%`
-    L1TEX long-scoreboard warning disappeared.
-  - Decision: retain the metadata-prefetch variant.
-
-## Completed Experiments
-
-- [x] **Replace synchronous loads with a two-stage TMA pipeline**
-  - Result: large improvement over the synchronous WGMMA implementation;
-    retained as the current baseline.
-
-- [x] **Test `64 x 64`, `128 x 32`, `128 x 64`, and `128 x 128` weight blocks**
-  - Result: `64 x 64` remains best at M=128; `128 x 128` is faster at M=512.
-  - Decision: retain all variants and use the result when implementing
-    shape-aware dispatch.
-
-- [x] **Test two consumer warpgroups with a `128 x 128` output tile**
-  - Result: occupancy increased, but sparse-kernel duration also increased
-    because the grid fell from 88 to 44 CTAs.
-  - Decision: retain for comparison, but do not use as the preferred kernel.
-
-- [x] **Profile shared-memory bank conflicts**
-  - Result: no bank conflicts were reported in the dense or sparse TMA
-    mainloops.
-  - Decision: do not prioritize TMA swizzle changes solely for bank-conflict
-    removal.
-
-- [x] **Profile memory-bandwidth utilization**
-  - Result: DRAM utilization is low; current kernels are latency-bound rather
-    than HBM-bandwidth-bound.
-  - Decision: prioritize metadata delivery, pipeline depth, and WGMMA wait
-    reduction.
-
-## Experiment Record Template
-
-Copy this block under the relevant checklist item after each experiment:
-
-```text
-Kernel version:
-Commit:
-GPU:
-Workload (M/N/K, grouped layout):
-Correctness:
-Latency before / after:
-DeepGEMM latency:
-NCU changes:
-Decision (retain / reject / investigate):
-Notes:
-```
+- [x] **两级 TMA pipeline**，相比同步 WGMMA 显著加速并成为初始优化基线。
+- [x] **weight block shape 调优**，`64 x 64` 在 M=128 最快，而 `128 x 128` 在 M=512 更有优势。
+- [x] **双 consumer warpgroup**，occupancy 提高但 sparse kernel 变慢，因此保留代码但不采用。
+- [x] **shared-memory bank conflict 分析**，NCU 未发现冲突，因此不继续调整当前 TMA swizzle。
+- [x] **memory bandwidth 分析**，DRAM 利用率较低，确认当前主要受 latency 而非 HBM bandwidth 限制。
+- [x] **block-row metadata prefetch**，标准 shape 总延迟降低 `6.6%–15.1%`，因此保留为当前首选版本。
