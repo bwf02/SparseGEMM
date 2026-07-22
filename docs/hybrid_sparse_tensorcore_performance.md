@@ -100,10 +100,12 @@ an NVIDIA H20; all variants use the same 25% hybrid sparsity pattern.
 |---:|---:|---:|:---|---:|---:|---:|---:|---:|
 | 128 | 1408 | 2048 | 64 x 64 | 26.84 | 9.19 | 12.47 | 5.18 | 9.66 |
 | 128 | 1408 | 2048 | 128 x 32 | 53.20 | 16.75 | 27.35 | 9.10 | 9.66 |
+| 128 | 1408 | 2048 | 128 x 32, output 128 x 128 | 57.29 | 21.56 | 30.05 | 5.68 | 9.59 |
 | 128 | 1408 | 2048 | 128 x 64 | 42.67 | 13.97 | 19.58 | 9.11 | 9.66 |
 | 128 | 1408 | 2048 | 128 x 128 | 32.89 | 13.06 | 14.40 | 5.43 | 9.66 |
 | 512 | 1408 | 2048 | 64 x 64 | 56.67 | 22.94 | 27.81 | 5.92 | 25.45 |
 | 512 | 1408 | 2048 | 128 x 32 | 61.01 | 22.19 | 29.31 | 9.51 | 25.45 |
+| 512 | 1408 | 2048 | 128 x 32, output 128 x 128 | 57.88 | 21.50 | 30.38 | 6.01 | 25.36 |
 | 512 | 1408 | 2048 | 128 x 64 | 53.97 | 22.03 | 22.43 | 9.51 | 25.45 |
 | 512 | 1408 | 2048 | 128 x 128 | 46.22 | 22.65 | 17.54 | 6.03 | 25.45 |
 
@@ -119,3 +121,13 @@ registers per thread, and long-scoreboard stalls from synchronous sparse
 metadata reads. Future work should target hardware-ready metadata packing and
 coalesced or staged metadata delivery rather than changing the current TMA
 swizzles solely for bank-conflict avoidance.
+
+The `128 x 32` weight-tile experiment also includes a `128 x 128` CTA output
+tile implemented by two consumer warpgroups sharing each staged weight tile.
+At `M=512`, achieved occupancy rises from about 8.8% to 14.0%, but the compute
+grid falls from 88 to 44 CTAs. NCU sparse duration increases from `45.47 us` to
+`49.54 us`; benchmark dense-plus-sparse latency also increases from `51.29 us`
+to `51.88 us`. Its lower end-to-end time relative to the original `128 x 32`
+entry comes from retaining an independent `64 x 64` reduction tile, not from
+the larger compute output tile. The dual-warpgroup variant is therefore kept
+for comparison but is not the preferred kernel.
