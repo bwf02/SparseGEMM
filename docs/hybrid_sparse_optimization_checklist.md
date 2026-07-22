@@ -120,11 +120,15 @@
   - Do not expect it to increase parallelism for very small grids by itself.
   - Result: pending.
 
-- [ ] **Evaluate topology/metadata prefetching**
+- [x] **Evaluate topology/metadata prefetching**
   - Prefetch upcoming block selectors and sparse metadata independently from
     the weight TMA pipeline.
   - Measure long-scoreboard stalls and instruction overhead.
-  - Result: pending.
+  - Result: block-row metadata staging improved total latency by `6.6%` to
+    `15.1%` across the standard projection shapes. At M=512, sparse-kernel NCU
+    duration fell from `36.96 us` to `24.74 us`, and the previous `43.37%`
+    L1TEX long-scoreboard warning disappeared.
+  - Decision: retain the metadata-prefetch variant.
 
 ## Completed Experiments
 
