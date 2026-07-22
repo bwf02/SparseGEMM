@@ -207,7 +207,12 @@ def benchmark_shape(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--m", type=int, nargs="+", default=[1, 8, 32, 128])
+    parser.add_argument(
+        "--m",
+        type=int,
+        nargs="+",
+        default=[128, 256, 512, 1024, 2048, 4096],
+    )
     parser.add_argument(
         "--n", type=int, help="output dimension; requires exactly one --m and --k"
     )

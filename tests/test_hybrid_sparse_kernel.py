@@ -9,6 +9,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_tensorcore,
     hybrid_block_sparse_gemm_wgmma_sync,
     hybrid_block_sparse_gemm_wgmma_tma,
+    hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch,
     hybrid_block_sparse_gemm_wgmma_tma_128x64,
     hybrid_block_sparse_gemm_wgmma_tma_block128x32,
     hybrid_block_sparse_gemm_wgmma_tma_block128x32_output128x128,
@@ -66,6 +67,11 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         actual = hybrid_block_sparse_gemm_tensorcore(activation, packed)
         wgmma_actual = hybrid_block_sparse_gemm_wgmma_sync(activation, packed)
         tma_actual = hybrid_block_sparse_gemm_wgmma_tma(activation, packed)
+        metadata_prefetch_actual = (
+            hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch(
+                activation, packed
+            )
+        )
         tma_128x64_actual = hybrid_block_sparse_gemm_wgmma_tma_128x64(
             activation, packed
         )
@@ -73,6 +79,9 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
         torch.testing.assert_close(wgmma_actual, expected, rtol=1e-2, atol=1e-2)
         torch.testing.assert_close(tma_actual, expected, rtol=1e-2, atol=1e-2)
+        torch.testing.assert_close(
+            metadata_prefetch_actual, expected, rtol=1e-2, atol=1e-2
+        )
         torch.testing.assert_close(tma_128x64_actual, expected, rtol=1e-2, atol=1e-2)
 
     def test_tensorcore_matches_reference_for_row_varying_metadata(self):
@@ -101,6 +110,11 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         actual = hybrid_block_sparse_gemm_tensorcore(activation, packed)
         wgmma_actual = hybrid_block_sparse_gemm_wgmma_sync(activation, packed)
         tma_actual = hybrid_block_sparse_gemm_wgmma_tma(activation, packed)
+        metadata_prefetch_actual = (
+            hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch(
+                activation, packed
+            )
+        )
         tma_128x64_actual = hybrid_block_sparse_gemm_wgmma_tma_128x64(
             activation, packed
         )
@@ -108,6 +122,9 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
         torch.testing.assert_close(wgmma_actual, expected, rtol=1e-2, atol=1e-2)
         torch.testing.assert_close(tma_actual, expected, rtol=1e-2, atol=1e-2)
+        torch.testing.assert_close(
+            metadata_prefetch_actual, expected, rtol=1e-2, atol=1e-2
+        )
         torch.testing.assert_close(tma_128x64_actual, expected, rtol=1e-2, atol=1e-2)
 
     def test_wgmma_sync_matches_reference_for_m_tails(self):

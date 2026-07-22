@@ -20,6 +20,18 @@
 - Keep older kernel versions in separate files when adding optimized variants,
   so correctness and performance can be compared across iterations.
 
+## Benchmark Shapes
+
+- Use `M = 128, 256, 512, 1024, 2048, 4096` for subsequent performance
+  benchmark sweeps.
+- Keep historical measurements at other M values in existing documents, but
+  do not include those values in new kernel comparison tables.
+- For grouped GEMM, report the total valid M and use workloads whose total
+  valid M matches the same standard sweep where practical.
+- Record new optimization results and iteration notes in
+  `docs/hybrid_sparse_optimization_results.md`. Do not append the new standard
+  sweep to `docs/hybrid_sparse_tensorcore_performance.md`, which is historical.
+
 ## JIT Kernel Organization
 
 - Do not place full CUDA kernel bodies inside JIT-generated raw strings.

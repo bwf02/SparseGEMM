@@ -337,6 +337,20 @@ def hybrid_block_sparse_gemm_wgmma_tma(
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 64x64 TMA kernel with block-row metadata staged in shared memory."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_metadata_prefetch",
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_128x64(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
