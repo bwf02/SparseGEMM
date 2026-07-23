@@ -72,7 +72,9 @@ static void sm90_hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent(
     const auto tensor_map_output = make_tma_cd_desc(
         d, m, n, 64, 64, n, 1, 128);
     const int total_tiles = ((m + 63) / 64) * ((n + 63) / 64);
-    const int persistent_ctas = std::min(total_tiles, device_runtime->get_num_sms());
+    constexpr int ctas_per_sm = 3;
+    const int persistent_ctas = std::min(
+        total_tiles, device_runtime->get_num_sms() * ctas_per_sm);
     const auto args = SM90HybridSparseFusedStsmPersistentRuntime::Args {
         .block_selector = block_selector.data_ptr(),
         .sparse_metadata = sparse_metadata.data_ptr(),
