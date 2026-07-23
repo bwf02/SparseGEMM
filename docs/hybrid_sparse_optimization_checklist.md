@@ -9,7 +9,7 @@
 ## 待尝试
 
 - [ ] **P0：增加 TMA pipeline stage**，保持 `64 x 64` weight block 并依次测试 3、4、5 stage 的延迟和 occupancy。
-- [ ] **P0：合并多个 K tile**，先测试 `merge_k=2`，减少 WGMMA `commit_group/wait_group` 的执行频率。
+- [ ] **P0：联合 K-block merge 与更深 pipeline**，仅在增加 TMA stage 后重新评估 `merge_k=2`，避免两级 buffer 成对释放阻断预取。
 - [ ] **P0：重分配 warpgroup 寄存器**，减少 producer 寄存器并增加 math warpgroup 可用寄存器。
 - [ ] **P1：CTA tile swizzle**，调整 tile 调度顺序以提高 activation 或 weight 的 L2 复用率。
 - [ ] **P1：shape-aware dispatch**，保持 `64 x 64` 为默认路径，仅继续评估 fused、lane-ready 的 `128 x 128` 等候选版本。
@@ -30,3 +30,4 @@
 - [x] **普通 GEMM persistent scheduler**，使用 `3 CTA/SM` 的 grid-stride tile 调度；单独使用时仍慢于静态 STSM，作为后续 persistent 优化基础保留。
 - [x] **预编码硬件 metadata**，weight conversion 直接生成 lane-ready WGMMA.SP words，移除 mainloop byte-code 解码，并降低寄存器、shared memory 和 warp 指令量。
 - [x] **`128 x 32` weight tile + 三级 TMA pipeline**，Stage 3 仅在 M=2048 相对 Stage 2 改善 `8.8%`，其他 M 持平或回退，且整体仍慢于当前 `64 x 64` fused kernel，因此不加入 shape-aware dispatch。
+- [x] **`merge_k=2` WGMMA group**，CTA barrier stall 从 `67.1%` 降至 `57.5%`，但 NCU duration 增加 `4.9%` 且多数 shape 回退，因此保留实现但不采用。
