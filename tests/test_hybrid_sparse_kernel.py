@@ -13,6 +13,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_merge_k2,
     hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch,
     hybrid_block_sparse_gemm_wgmma_tma_128x64,
     hybrid_block_sparse_gemm_wgmma_tma_block128x32,
@@ -229,6 +230,32 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                     activation, packed
                 )
                 torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
+    def test_lane_ready_merge_k2_matches_reference_for_even_and_odd_k_blocks(self):
+        torch.manual_seed(109)
+        for block_m, k, sparse_block_ids in (
+            (2, 256, (0,)),
+            (3, 384, (1,)),
+        ):
+            with self.subTest(block_m=block_m):
+                layout = HybridBlockSparseLayout(64, 64, 1, block_m)
+                weight = torch.randn(
+                    128, k, device="cuda", dtype=torch.bfloat16
+                )
+                mask = make_mask(weight, layout, sparse_block_ids)
+                packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+                activation = torch.randn(
+                    129, k, device="cuda", dtype=torch.bfloat16
+                )
+                expected = hybrid_block_sparse_gemm_ref(activation, packed)
+                actual = (
+                    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_merge_k2(
+                        activation, packed
+                    )
+                )
+                torch.testing.assert_close(
+                    actual, expected, rtol=1e-2, atol=1e-2
+                )
 
     def test_wgmma_tma_block128x32_stage3_matches_reference(self):
         torch.manual_seed(108)
