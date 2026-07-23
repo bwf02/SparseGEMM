@@ -1,4 +1,4 @@
-shape,total_latency_us,deepgemm_latency_us,speedup_over_deepgemm
+shape_mnk,total_latency_us,deepgemm_latency_us,speedup_over_deepgemm
 128x1408x2048,18.27,10.32,0.565
 128x2048x1408,13.65,9.26,0.678
 256x1408x2048,25.92,14.91,0.575
