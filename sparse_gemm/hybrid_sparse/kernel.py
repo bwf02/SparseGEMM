@@ -351,6 +351,20 @@ def hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch(
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_direct(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the fused 64x64 hybrid mainloop with direct BF16 output stores."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_direct",
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_128x64(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
