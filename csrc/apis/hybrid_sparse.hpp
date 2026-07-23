@@ -13,6 +13,7 @@
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_merge_k2.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_stage3.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_stage4.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_stage5.hpp"
@@ -634,6 +635,58 @@ static void hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_r
                    std::make_tuple(block_rows, block_groups, block_n, 2, 4, 16));
 
     sm90_hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3(
+        a, block_selector, dense_values, sparse_values, hardware_metadata,
+        d, m, n, k, block_n, block_m);
+}
+
+static void hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc(
+        const torch::Tensor& a,
+        const torch::Tensor& block_selector,
+        const torch::Tensor& dense_values,
+        const torch::Tensor& sparse_values,
+        const torch::Tensor& hardware_metadata,
+        const torch::Tensor& d,
+        const int& block_n,
+        const int& block_m) {
+    DG_HOST_ASSERT(device_runtime->get_arch_major() == 9);
+    DG_HOST_ASSERT(block_n > 0 and block_n <= block_m and block_m <= 63);
+    DG_HOST_ASSERT(a.is_cuda() and block_selector.is_cuda());
+    DG_HOST_ASSERT(dense_values.is_cuda() and sparse_values.is_cuda());
+    DG_HOST_ASSERT(hardware_metadata.is_cuda() and d.is_cuda());
+    DG_HOST_ASSERT(a.is_contiguous() and block_selector.is_contiguous());
+    DG_HOST_ASSERT(dense_values.is_contiguous() and sparse_values.is_contiguous());
+    DG_HOST_ASSERT(hardware_metadata.is_contiguous() and d.is_contiguous());
+    const auto device = a.get_device();
+    DG_HOST_ASSERT(block_selector.get_device() == device);
+    DG_HOST_ASSERT(dense_values.get_device() == device);
+    DG_HOST_ASSERT(sparse_values.get_device() == device);
+    DG_HOST_ASSERT(hardware_metadata.get_device() == device);
+    DG_HOST_ASSERT(d.get_device() == device);
+    DG_HOST_ASSERT(a.scalar_type() == torch::kBFloat16);
+    DG_HOST_ASSERT(dense_values.scalar_type() == torch::kBFloat16);
+    DG_HOST_ASSERT(sparse_values.scalar_type() == torch::kBFloat16);
+    DG_HOST_ASSERT(block_selector.scalar_type() == torch::kLong);
+    DG_HOST_ASSERT(hardware_metadata.scalar_type() == torch::kInt);
+    DG_HOST_ASSERT(d.scalar_type() == torch::kBFloat16);
+
+    const auto [m, k] = get_shape<2>(a);
+    const auto [m_, n] = get_shape<2>(d);
+    DG_HOST_ASSERT(m == m_ and m > 0 and n > 0 and k > 0);
+    DG_HOST_ASSERT(n % 64 == 0);
+    DG_HOST_ASSERT(k % (64 * block_m) == 0);
+    const int block_rows = n / 64;
+    const int block_groups = k / (64 * block_m);
+    const int dense_count = block_m - block_n;
+    DG_HOST_ASSERT(get_shape<2>(block_selector) ==
+                   std::make_tuple(block_rows, block_groups));
+    DG_HOST_ASSERT(get_shape<5>(dense_values) ==
+                   std::make_tuple(block_rows, block_groups, dense_count, 64, 64));
+    DG_HOST_ASSERT(get_shape<5>(sparse_values) ==
+                   std::make_tuple(block_rows, block_groups, block_n, 64, 32));
+    DG_HOST_ASSERT(get_shape<6>(hardware_metadata) ==
+                   std::make_tuple(block_rows, block_groups, block_n, 2, 4, 16));
+
+    sm90_hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc(
         a, block_selector, dense_values, sparse_values, hardware_metadata,
         d, m, n, k, block_n, block_m);
 }
@@ -1281,6 +1334,17 @@ static void register_apis(pybind11::module_& m) {
     m.def(
         "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3",
         &hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3,
+        pybind11::arg("a"),
+        pybind11::arg("block_selector"),
+        pybind11::arg("dense_values"),
+        pybind11::arg("sparse_values"),
+        pybind11::arg("hardware_metadata"),
+        pybind11::arg("d"),
+        pybind11::arg("block_n"),
+        pybind11::arg("block_m"));
+    m.def(
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc",
+        &hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc,
         pybind11::arg("a"),
         pybind11::arg("block_selector"),
         pybind11::arg("dense_values"),

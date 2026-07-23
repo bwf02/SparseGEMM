@@ -461,6 +461,28 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3(
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run Stage 3 with a 40/128 producer/math warpgroup register budget."""
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError(
+            "packed_weight does not contain lane-ready hardware metadata"
+        )
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc",
+        metadata=metadata,
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage4(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
