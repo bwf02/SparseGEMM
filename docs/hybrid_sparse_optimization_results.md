@@ -85,6 +85,34 @@ entry because total M alone does not fully describe a grouped workload.
 | Baseline | - | - | 2048 | - | - | - | - | - |
 | Baseline | - | - | 4096 | - | - | - | - | - |
 
+## Fused GEMM
+
+These measurements use the fused dense/sparse mainloop. `Direct` writes each
+BF16 output element from registers, while `STSM/TMA` stages BF16 through
+swizzled shared memory and uses a TMA store.
+
+### Gate/Up Projection
+
+| M | Direct (us) | STSM/TMA (us) | DeepGEMM (us) | Direct / STSM | DG / STSM | Correct |
+|---:|---:|---:|---:|---:|---:|:---:|
+| 128 | 18.42 | 18.27 | 10.32 | 1.008x | 0.565x | Yes |
+| 256 | 26.54 | 25.92 | 14.91 | 1.024x | 0.575x | Yes |
+| 512 | 71.66 | 32.66 | 27.35 | 2.195x | 0.837x | Yes |
+| 1024 | 76.84 | 60.59 | 52.78 | 1.268x | 0.871x | Yes |
+| 2048 | 128.37 | 122.86 | 102.93 | 1.045x | 0.838x | Yes |
+| 4096 | 248.27 | 185.84 | 198.94 | 1.336x | 1.071x | Yes |
+
+### Down Projection
+
+| M | Direct (us) | STSM/TMA (us) | DeepGEMM (us) | Direct / STSM | DG / STSM | Correct |
+|---:|---:|---:|---:|---:|---:|:---:|
+| 128 | 13.76 | 13.65 | 9.26 | 1.008x | 0.678x | Yes |
+| 256 | 19.33 | 19.03 | 14.29 | 1.016x | 0.751x | Yes |
+| 512 | 38.31 | 39.08 | 26.71 | 0.980x | 0.683x | Yes |
+| 1024 | 72.73 | 80.61 | 51.41 | 0.902x | 0.638x | Yes |
+| 2048 | 130.99 | 102.04 | 100.49 | 1.284x | 0.985x | Yes |
+| 4096 | 278.75 | 191.15 | 197.71 | 1.458x | 1.034x | Yes |
+
 ## Iteration Log
 
 Add one section per attempted optimization. Keep rejected versions in the log.
@@ -138,6 +166,52 @@ Add one section per attempted optimization. Keep rejected versions in the log.
 - Result: contiguous shared-memory staging removes fine-grained metadata
   global loads from the WGMMA.SP critical path.
 - Decision: retain as the new preferred `64 x 64` kernel version.
+
+### Iteration 2: Fused Dense/Sparse Mainloop
+
+- Status: completed.
+- Checklist item: fused dense/sparse mainloop.
+- Kernel version: `64 x 64` two-stage TMA with one FP32 accumulator and direct
+  BF16 global stores.
+- Commit: `e9ac569`.
+- Date: 2026-07-23.
+- GPU: NVIDIA H20 (SM90).
+- Correctness: all six legal 2:4 metadata pairs and row-varying metadata tests
+  passed against the Torch reference.
+- Result: removed the two partial-output buffers, reduction kernel, and three
+  kernel launches from the steady-state path.
+- Decision: retain as the fused-mainloop baseline.
+
+### Iteration 3: BF16 STSM/TMA Epilogue
+
+- Status: completed.
+- Checklist item: fused STSM/TMA epilogue.
+- Kernel version: fused `64 x 64` mainloop with FP32-to-BF16 conversion,
+  `stmatrix.sync.aligned.x2.m8n8.shared.b16.trans`, 128-byte XOR-swizzled
+  shared memory, and TMA global store.
+- Commit: `9e1f379`; include fix: `708d7bd`.
+- Date: 2026-07-23.
+- GPU: NVIDIA H20 (SM90).
+- Weight block: `64 x 64`.
+- Output tile: `64 x 64`.
+- Pipeline stages: two for weight and activation; one synchronous output stage.
+- L2 flush: disabled.
+- Number of measurements: 100 per shape.
+- Correctness: all 13 hybrid sparse CUDA tests passed, including all six legal
+  metadata pairs and row-varying metadata.
+- NCU workload: `M=512, N=1408, K=2048`.
+- NCU changes from fused direct: duration `54.37 -> 34.18 us`, registers per
+  thread `94 -> 74`, theoretical occupancy `25.0% -> 37.5%`, achieved
+  occupancy `14.93% -> 18.09%`, and SM throughput `30.16% -> 48.35%`.
+  The direct kernel's half-utilized global-store sector warning disappeared.
+- Remaining bottleneck: the grid covers only `0.75` wave per SM and barrier
+  stalls account for `37.0%` of average issue latency.
+- Performance change: STSM/TMA improves the gate/up projection at M=4096 from
+  `248.27 us` to `185.84 us` and slightly exceeds DeepGEMM at both M=4096
+  projection shapes. Small-M latency remains behind DeepGEMM.
+- Result: retain the DeepGEMM-style BF16 STSM/TMA data path. Test persistent
+  output-stage overlap as a separate iteration.
+- Decision: retain.
 
 ## Iteration Template
 

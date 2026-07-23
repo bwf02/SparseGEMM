@@ -15,8 +15,7 @@
 - [ ] **P1：CTA tile swizzle**，调整 tile 调度顺序以提高 activation 或 weight 的 L2 复用率。
 - [ ] **P1：shape-aware dispatch**，小 M 使用 `64 x 64`，较大 M 根据实测选择 `128 x 128` 等版本。
 - [ ] **P1：grouped GEMM persistent scheduler**，让固定数量的 CTA 持续领取不均匀 expert tile。
-- [ ] **P2：融合 dense/sparse mainloop**，在同一 accumulator 中累加两条路径并移除 partial buffer 与 reduce kernel。
-- [ ] **P2：融合 STSM/TMA epilogue**，通过 shared-memory staging 和 TMA store 写出最终结果并尝试重叠下一 tile。
+- [ ] **P2：persistent epilogue overlap**，让 TMA store 与同一 CTA 的下一 output tile mainloop 重叠。
 - [ ] **P3：TMA multicast/CTA cluster**，仅在 operand 复用和并行 wave 足够时评估 cluster 共享收益。
 
 ## 已完成
@@ -27,3 +26,5 @@
 - [x] **shared-memory bank conflict 分析**，NCU 未发现冲突，因此不继续调整当前 TMA swizzle。
 - [x] **memory bandwidth 分析**，DRAM 利用率较低，确认当前主要受 latency 而非 HBM bandwidth 限制。
 - [x] **block-row metadata prefetch**，标准 shape 总延迟降低 `6.6%–15.1%`，因此保留为当前首选版本。
+- [x] **融合 dense/sparse mainloop**，在同一 FP32 accumulator 中累加两条路径并移除 partial buffer 与 reduce kernel。
+- [x] **BF16 STSM/TMA epilogue**，先转换 BF16，再用 STSM 写入 swizzled shared memory，最后由 TMA 写回 global memory。
