@@ -32,86 +32,27 @@ historical results remain in `hybrid_sparse_tensorcore_performance.md`.
 - Record whether L2 flush is enabled and keep that setting identical across
   compared versions.
 
-## Gate/Up Projection
+## Current Performance Summary
 
-`N = 1408, K = 2048`
+Current kernel: fused dense/sparse mainloop with the BF16 STSM/TMA epilogue.
+Because all contributions accumulate in one kernel, separate sparse, dense,
+and reduction latency do not exist for this version and are marked `N/A`.
+Speedup is always calculated as `DeepGEMM / Total`.
 
-| Version | M | Dense (us) | Sparse (us) | Reduce (us) | Total (us) | DeepGEMM (us) | DG / Hybrid | Correct |
-|:---|---:|---:|---:|---:|---:|---:|---:|:---:|
-| Baseline | 128 | 9.17 | 12.46 | 5.04 | 26.68 | 9.68 | 0.363x | Yes |
-| Metadata prefetch | 128 | 9.20 | 9.07 | 5.06 | 23.33 | 9.68 | 0.415x | Yes |
-| Baseline | 256 | 12.08 | 14.12 | 5.34 | 31.54 | 13.89 | 0.440x | Yes |
-| Metadata prefetch | 256 | 12.10 | 11.25 | 5.34 | 28.69 | 13.89 | 0.484x | Yes |
-| Baseline | 512 | 23.03 | 27.70 | 5.96 | 56.70 | 25.49 | 0.450x | Yes |
-| Metadata prefetch | 512 | 23.05 | 20.86 | 5.97 | 49.87 | 25.49 | 0.511x | Yes |
-| Baseline | 1024 | 34.39 | 42.18 | 6.55 | 83.13 | 48.98 | 0.589x | Yes |
-| Metadata prefetch | 1024 | 34.38 | 31.00 | 6.62 | 71.99 | 48.98 | 0.680x | Yes |
-| Baseline | 2048 | 57.30 | 74.98 | 13.44 | 145.73 | 95.68 | 0.657x | Yes |
-| Metadata prefetch | 2048 | 57.50 | 53.19 | 13.36 | 124.04 | 95.68 | 0.771x | Yes |
-| Baseline | 4096 | 104.16 | 133.88 | 32.02 | 270.06 | 184.10 | 0.682x | Yes |
-| Metadata prefetch | 4096 | 103.84 | 94.79 | 32.05 | 230.68 | 184.10 | 0.798x | Yes |
-
-## Down Projection
-
-`N = 2048, K = 1408`
-
-| Version | M | Dense (us) | Sparse (us) | Reduce (us) | Total (us) | DeepGEMM (us) | DG / Hybrid | Correct |
-|:---|---:|---:|---:|---:|---:|---:|---:|:---:|
-| Baseline | 128 | 7.01 | 9.22 | 5.08 | 21.32 | 8.61 | 0.404x | Yes |
-| Metadata prefetch | 128 | 7.03 | 7.27 | 5.10 | 19.39 | 8.61 | 0.444x | Yes |
-| Baseline | 256 | 9.18 | 10.56 | 5.28 | 25.01 | 13.35 | 0.534x | Yes |
-| Metadata prefetch | 256 | 9.22 | 8.85 | 5.29 | 23.35 | 13.35 | 0.572x | Yes |
-| Baseline | 512 | 17.85 | 20.56 | 6.08 | 44.48 | 24.82 | 0.558x | Yes |
-| Metadata prefetch | 512 | 17.86 | 16.38 | 6.11 | 40.34 | 24.82 | 0.615x | Yes |
-| Baseline | 1024 | 33.23 | 44.01 | 7.97 | 85.22 | 47.74 | 0.560x | Yes |
-| Metadata prefetch | 1024 | 32.94 | 31.44 | 7.98 | 72.36 | 47.74 | 0.660x | Yes |
-| Baseline | 2048 | 58.96 | 73.51 | 18.80 | 151.27 | 93.63 | 0.619x | Yes |
-| Metadata prefetch | 2048 | 59.20 | 60.90 | 18.75 | 138.85 | 93.63 | 0.674x | Yes |
-| Baseline | 4096 | 105.07 | 136.45 | 44.95 | 286.47 | 183.30 | 0.640x | Yes |
-| Metadata prefetch | 4096 | 104.99 | 105.58 | 44.97 | 255.54 | 183.30 | 0.717x | Yes |
-
-## Grouped GEMM
-
-Use total valid M matching the standard sweep where practical. Record the
-expert count, token distribution, grouped mode, and capacity in the iteration
-entry because total M alone does not fully describe a grouped workload.
-
-| Version | Mode | Experts | Total valid M | Distribution | Total (us) | DeepGEMM (us) | DG / Hybrid | Correct |
-|:---|:---|---:|---:|:---|---:|---:|---:|:---:|
-| Baseline | - | - | 128 | - | - | - | - | - |
-| Baseline | - | - | 256 | - | - | - | - | - |
-| Baseline | - | - | 512 | - | - | - | - | - |
-| Baseline | - | - | 1024 | - | - | - | - | - |
-| Baseline | - | - | 2048 | - | - | - | - | - |
-| Baseline | - | - | 4096 | - | - | - | - | - |
-
-## Fused GEMM
-
-These measurements use the fused dense/sparse mainloop. `Direct` writes each
-BF16 output element from registers, while `STSM/TMA` stages BF16 through
-swizzled shared memory and uses a TMA store.
-
-### Gate/Up Projection
-
-| M | Direct (us) | STSM/TMA (us) | DeepGEMM (us) | Direct / STSM | DG / STSM | Correct |
-|---:|---:|---:|---:|---:|---:|:---:|
-| 128 | 18.42 | 18.27 | 10.32 | 1.008x | 0.565x | Yes |
-| 256 | 26.54 | 25.92 | 14.91 | 1.024x | 0.575x | Yes |
-| 512 | 71.66 | 32.66 | 27.35 | 2.195x | 0.837x | Yes |
-| 1024 | 76.84 | 60.59 | 52.78 | 1.268x | 0.871x | Yes |
-| 2048 | 128.37 | 122.86 | 102.93 | 1.045x | 0.838x | Yes |
-| 4096 | 248.27 | 185.84 | 198.94 | 1.336x | 1.071x | Yes |
-
-### Down Projection
-
-| M | Direct (us) | STSM/TMA (us) | DeepGEMM (us) | Direct / STSM | DG / STSM | Correct |
-|---:|---:|---:|---:|---:|---:|:---:|
-| 128 | 13.76 | 13.65 | 9.26 | 1.008x | 0.678x | Yes |
-| 256 | 19.33 | 19.03 | 14.29 | 1.016x | 0.751x | Yes |
-| 512 | 38.31 | 39.08 | 26.71 | 0.980x | 0.683x | Yes |
-| 1024 | 72.73 | 80.61 | 51.41 | 0.902x | 0.638x | Yes |
-| 2048 | 130.99 | 102.04 | 100.49 | 1.284x | 0.985x | Yes |
-| 4096 | 278.75 | 191.15 | 197.71 | 1.458x | 1.034x | Yes |
+| Shape (M x N x K) | Sparse latency (us) | Dense latency (us) | Reduce (us) | Total (us) | DeepGEMM (us) | Speedup over DeepGEMM |
+|:---|---:|---:|---:|---:|---:|---:|
+| 128 x 1408 x 2048 | N/A | N/A | N/A | 18.27 | 10.32 | 0.565x |
+| 128 x 2048 x 1408 | N/A | N/A | N/A | 13.65 | 9.26 | 0.678x |
+| 256 x 1408 x 2048 | N/A | N/A | N/A | 25.92 | 14.91 | 0.575x |
+| 256 x 2048 x 1408 | N/A | N/A | N/A | 19.03 | 14.29 | 0.751x |
+| 512 x 1408 x 2048 | N/A | N/A | N/A | 32.66 | 27.35 | 0.837x |
+| 512 x 2048 x 1408 | N/A | N/A | N/A | 39.08 | 26.71 | 0.683x |
+| 1024 x 1408 x 2048 | N/A | N/A | N/A | 60.59 | 52.78 | 0.871x |
+| 1024 x 2048 x 1408 | N/A | N/A | N/A | 80.61 | 51.41 | 0.638x |
+| 2048 x 1408 x 2048 | N/A | N/A | N/A | 122.86 | 102.93 | 0.838x |
+| 2048 x 2048 x 1408 | N/A | N/A | N/A | 102.04 | 100.49 | 0.985x |
+| 4096 x 1408 x 2048 | N/A | N/A | N/A | 185.84 | 198.94 | 1.071x |
+| 4096 x 2048 x 1408 | N/A | N/A | N/A | 191.15 | 197.71 | 1.034x |
 
 ## Iteration Log
 
