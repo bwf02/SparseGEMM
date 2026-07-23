@@ -8,7 +8,6 @@
 
 ## 待尝试
 
-- [ ] **P0：预编码硬件 metadata**，在 weight conversion 阶段直接生成 lane-ready WGMMA.SP metadata，移除 mainloop 中的 byte-code 解码。
 - [ ] **P0：增加 TMA pipeline stage**，保持 `64 x 64` weight block 并依次测试 3、4、5 stage 的延迟和 occupancy。
 - [ ] **P0：合并多个 K tile**，先测试 `merge_k=2`，减少 WGMMA `commit_group/wait_group` 的执行频率。
 - [ ] **P0：重分配 warpgroup 寄存器**，减少 producer 寄存器并增加 math warpgroup 可用寄存器。
@@ -28,3 +27,5 @@
 - [x] **block-row metadata prefetch**，标准 shape 总延迟降低 `6.6%–15.1%`，因此保留为当前首选版本。
 - [x] **融合 dense/sparse mainloop**，在同一 FP32 accumulator 中累加两条路径并移除 partial buffer 与 reduce kernel。
 - [x] **BF16 STSM/TMA epilogue**，先转换 BF16，再用 STSM 写入 swizzled shared memory，最后由 TMA 写回 global memory。
+- [x] **普通 GEMM persistent scheduler**，使用 `3 CTA/SM` 的 grid-stride tile 调度；单独使用时仍慢于静态 STSM，作为后续 persistent 优化基础保留。
+- [x] **预编码硬件 metadata**，weight conversion 直接生成 lane-ready WGMMA.SP words，移除 mainloop byte-code 解码，并降低寄存器、shared memory 和 warp 指令量。
