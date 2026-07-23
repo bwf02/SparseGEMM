@@ -35,7 +35,12 @@ static void call_cublaslt_api(const cublasOperation_t& trans_a,
                               const torch::Tensor& b,
                               const torch::Tensor& d,
                               const bool& accumulate) {
-    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_FAST_TF32;
+    const bool bf16_inputs =
+        a.scalar_type() == torch::kBFloat16 and
+        b.scalar_type() == torch::kBFloat16;
+    cublasComputeType_t compute_type = bf16_inputs
+        ? CUBLAS_COMPUTE_32F
+        : CUBLAS_COMPUTE_32F_FAST_TF32;
     cudaDataType_t scale_type = CUDA_R_32F;
 
     // Operation description
