@@ -32,27 +32,12 @@ historical results remain in `hybrid_sparse_tensorcore_performance.md`.
 - Record whether L2 flush is enabled and keep that setting identical across
   compared versions.
 
-## Current Performance Summary
+## Performance Data
 
-Current kernel: fused dense/sparse mainloop with the BF16 STSM/TMA epilogue.
-Because all contributions accumulate in one kernel, separate sparse, dense,
-and reduction latency do not exist for this version and are marked `N/A`.
-Speedup is always calculated as `DeepGEMM / Total`.
-
-| Shape (M x N x K) | Sparse latency (us) | Dense latency (us) | Reduce (us) | Total (us) | DeepGEMM (us) | Speedup over DeepGEMM |
-|:---|---:|---:|---:|---:|---:|---:|
-| 128 x 1408 x 2048 | N/A | N/A | N/A | 18.27 | 10.32 | 0.565x |
-| 128 x 2048 x 1408 | N/A | N/A | N/A | 13.65 | 9.26 | 0.678x |
-| 256 x 1408 x 2048 | N/A | N/A | N/A | 25.92 | 14.91 | 0.575x |
-| 256 x 2048 x 1408 | N/A | N/A | N/A | 19.03 | 14.29 | 0.751x |
-| 512 x 1408 x 2048 | N/A | N/A | N/A | 32.66 | 27.35 | 0.837x |
-| 512 x 2048 x 1408 | N/A | N/A | N/A | 39.08 | 26.71 | 0.683x |
-| 1024 x 1408 x 2048 | N/A | N/A | N/A | 60.59 | 52.78 | 0.871x |
-| 1024 x 2048 x 1408 | N/A | N/A | N/A | 80.61 | 51.41 | 0.638x |
-| 2048 x 1408 x 2048 | N/A | N/A | N/A | 122.86 | 102.93 | 0.838x |
-| 2048 x 2048 x 1408 | N/A | N/A | N/A | 102.04 | 100.49 | 0.985x |
-| 4096 x 1408 x 2048 | N/A | N/A | N/A | 185.84 | 198.94 | 1.071x |
-| 4096 x 2048 x 1408 | N/A | N/A | N/A | 191.15 | 197.71 | 1.034x |
+Performance measurements are maintained separately in
+[`hybrid_sparse_performance.csv`](hybrid_sparse_performance.csv). The CSV only
+records fused-kernel total latency, DeepGEMM latency, and
+`DeepGEMM / Total` speedup.
 
 ## Iteration Log
 
