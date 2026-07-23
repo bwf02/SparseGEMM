@@ -11,6 +11,7 @@ from sparse_gemm.hybrid_sparse import (
     dense_to_hybrid_block_sparse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage4,
 )
 
 from bench_hybrid_sparse import Shape, make_hybrid_mask, qwen_moe_shapes
@@ -20,6 +21,9 @@ STANDARD_M = (128, 256, 512, 1024, 2048, 4096)
 STAGE2_KERNEL = "hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready"
 STAGE3_KERNEL = (
     "hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_stage3"
+)
+STAGE4_KERNEL = (
+    "hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_stage4"
 )
 CUBLASLT_KERNEL_NAMES = ("nvjet", "gemv", "gemm")
 
@@ -40,6 +44,7 @@ def benchmark_shape(shape: Shape, num_tests: int, flush_l2: bool) -> None:
         shape.m, shape.n, device="cuda", dtype=torch.bfloat16
     )
     stage3_out = torch.empty_like(stage2_out)
+    stage4_out = torch.empty_like(stage2_out)
     deepgemm_out = torch.empty_like(stage2_out)
     cublas_out = torch.empty_like(stage2_out)
 
@@ -49,10 +54,14 @@ def benchmark_shape(shape: Shape, num_tests: int, flush_l2: bool) -> None:
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3(
         activation, packed, out=stage3_out
     )
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage4(
+        activation, packed, out=stage4_out
+    )
     deep_gemm.bf16_gemm_nt(activation, dense_weight, deepgemm_out)
     deep_gemm.cublaslt_gemm_nt(activation, dense_weight, cublas_out, c=None)
     torch.cuda.synchronize()
     torch.testing.assert_close(stage3_out, stage2_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(stage4_out, stage2_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(stage2_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(cublas_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
@@ -70,6 +79,15 @@ def benchmark_shape(shape: Shape, num_tests: int, flush_l2: bool) -> None:
             activation, packed, out=stage3_out
         ),
         STAGE3_KERNEL,
+        num_tests=num_tests,
+        suppress_kineto_output=True,
+        flush_l2=flush_l2,
+    )
+    stage4_time = bench_kineto(
+        lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage4(
+            activation, packed, out=stage4_out
+        ),
+        STAGE4_KERNEL,
         num_tests=num_tests,
         suppress_kineto_output=True,
         flush_l2=flush_l2,
@@ -97,9 +115,10 @@ def benchmark_shape(shape: Shape, num_tests: int, flush_l2: bool) -> None:
     print(
         f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
         f"{stage2_time * 1e6:10.2f} {stage3_time * 1e6:10.2f} "
+        f"{stage4_time * 1e6:10.2f} "
         f"{deepgemm_time * 1e6:10.2f} {cublas_time * 1e6:10.2f} "
-        f"{stage2_time / stage3_time:10.3f}x "
-        f"{deepgemm_time / stage3_time:10.3f}x"
+        f"{stage2_time / stage4_time:10.3f}x "
+        f"{deepgemm_time / stage4_time:10.3f}x"
     )
 
 
@@ -123,8 +142,8 @@ def main() -> None:
     )
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(
-        "     M      N      K | stage2(us) stage3(us) deepgemm(us) "
-        "cublas(us) stage2/stage3 dg/stage3"
+        "     M      N      K | stage2(us) stage3(us) stage4(us) "
+        "deepgemm(us) cublas(us) stage2/stage4 dg/stage4"
     )
     for shape in shapes:
         benchmark_shape(shape, args.num_tests, not args.no_flush_l2)
