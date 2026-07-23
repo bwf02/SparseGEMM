@@ -265,6 +265,7 @@ def _hybrid_block_sparse_gemm_wgmma_tma(
     binding: str,
     block_h: int = 64,
     block_w: int = 64,
+    metadata: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     if not isinstance(packed_weight, HybridBlockSparseWeight):
         raise TypeError("packed_weight must be a HybridBlockSparseWeight")
@@ -285,11 +286,12 @@ def _hybrid_block_sparse_gemm_wgmma_tma(
     n, k = packed_weight.original_shape
     if a.shape[1] != k:
         raise ValueError(f"activation K ({a.shape[1]}) must match weight K ({k})")
+    kernel_metadata = packed_weight.sparse_metadata if metadata is None else metadata
     packed_tensors = (
         packed_weight.block_selector,
         packed_weight.dense_values,
         packed_weight.sparse_values,
-        packed_weight.sparse_metadata,
+        kernel_metadata,
     )
     if packed_weight.dense_values.dtype != torch.bfloat16:
         raise TypeError("packed weight values must have dtype torch.bfloat16")
@@ -315,7 +317,7 @@ def _hybrid_block_sparse_gemm_wgmma_tma(
         packed_weight.block_selector,
         packed_weight.dense_values,
         packed_weight.sparse_values,
-        packed_weight.sparse_metadata,
+        kernel_metadata,
         out,
         packed_weight.layout.block_n,
         packed_weight.layout.block_m,
@@ -390,6 +392,28 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent(
         packed_weight,
         out,
         "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent",
+    )
+
+
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the persistent fused kernel with pre-encoded WGMMA.SP metadata."""
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError(
+            "packed_weight does not contain lane-ready hardware metadata"
+        )
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready",
+        metadata=metadata,
     )
 
 

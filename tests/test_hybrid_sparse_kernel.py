@@ -12,6 +12,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_direct,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready,
     hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch,
     hybrid_block_sparse_gemm_wgmma_tma_128x64,
     hybrid_block_sparse_gemm_wgmma_tma_block128x32,
@@ -86,6 +87,11 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 activation, packed
             )
         )
+        lane_ready_actual = (
+            hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready(
+                activation, packed
+            )
+        )
         tma_128x64_actual = hybrid_block_sparse_gemm_wgmma_tma_128x64(
             activation, packed
         )
@@ -104,6 +110,9 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         )
         torch.testing.assert_close(
             persistent_actual, expected, rtol=1e-2, atol=1e-2
+        )
+        torch.testing.assert_close(
+            lane_ready_actual, expected, rtol=1e-2, atol=1e-2
         )
         torch.testing.assert_close(tma_128x64_actual, expected, rtol=1e-2, atol=1e-2)
 
@@ -149,6 +158,11 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 activation, packed
             )
         )
+        lane_ready_actual = (
+            hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready(
+                activation, packed
+            )
+        )
         tma_128x64_actual = hybrid_block_sparse_gemm_wgmma_tma_128x64(
             activation, packed
         )
@@ -167,6 +181,9 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         )
         torch.testing.assert_close(
             persistent_actual, expected, rtol=1e-2, atol=1e-2
+        )
+        torch.testing.assert_close(
+            lane_ready_actual, expected, rtol=1e-2, atol=1e-2
         )
         torch.testing.assert_close(tma_128x64_actual, expected, rtol=1e-2, atol=1e-2)
 

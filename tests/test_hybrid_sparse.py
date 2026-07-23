@@ -77,6 +77,30 @@ class TestHybridSparseFormat(unittest.TestCase):
         self.assertEqual(packed.sparse_metadata.flatten().tolist(), list(range(6)))
         self.assertTrue(torch.equal(packed.to_dense(), weight.masked_fill(mask, 0)))
 
+    def test_lane_ready_metadata_matches_wgmma_encoding(self):
+        layout = HybridBlockSparseLayout(64, 64, 1, 1)
+        weight = torch.randn(64, 64, generator=torch.Generator().manual_seed(8))
+        mask = torch.ones_like(weight, dtype=torch.bool).reshape(64, 16, 4)
+        pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+        for row in range(64):
+            for quartet in range(16):
+                first, second = pairs[(row + quartet) % len(pairs)]
+                mask[row, quartet, first] = False
+                mask[row, quartet, second] = False
+        packed = dense_to_hybrid_block_sparse(weight, mask.reshape_as(weight), layout)
+
+        self.assertIsNotNone(packed.hardware_metadata)
+        self.assertEqual(tuple(packed.hardware_metadata.shape), (1, 1, 1, 2, 4, 16))
+        nibbles = (0x4, 0x8, 0xC, 0x9, 0xD, 0xE)
+        expected = 0
+        for quartet in range(4):
+            lower_code = int(packed.sparse_metadata[0, 0, 0, 0, quartet])
+            upper_code = int(packed.sparse_metadata[0, 0, 0, 8, quartet])
+            expected |= nibbles[lower_code] << (quartet * 4)
+            expected |= nibbles[upper_code] << ((quartet + 4) * 4)
+        actual = int(packed.hardware_metadata[0, 0, 0, 0, 0, 0]) & 0xFFFFFFFF
+        self.assertEqual(actual, expected)
+
     def test_rejects_invalid_mask_and_layout(self):
         layout = HybridBlockSparseLayout(2, 4, 1, 2)
         weight = torch.randn(2, 8)

@@ -1,7 +1,7 @@
 """Canonical storage for hybrid dense-block and 2:4-block sparse weights."""
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -72,6 +72,7 @@ class HybridBlockSparseWeight:
     dense_values: torch.Tensor
     sparse_values: torch.Tensor
     sparse_metadata: torch.Tensor
+    hardware_metadata: Optional[torch.Tensor] = None
 
     @property
     def config(self) -> HybridBlockSparseLayout:
@@ -118,6 +119,44 @@ def _restore_leading_shape(
     tensor: torch.Tensor, leading_shape: Tuple[int, ...]
 ) -> torch.Tensor:
     return tensor.reshape(leading_shape + tuple(tensor.shape[1:]))
+
+
+def _encode_lane_ready_metadata(sparse_metadata: torch.Tensor) -> torch.Tensor:
+    """Encode 64x64 2:4 pair codes into lane-ready WGMMA.SP words."""
+    nibble_table = torch.tensor(
+        (0x4, 0x8, 0xC, 0x9, 0xD, 0xE),
+        dtype=torch.int64,
+        device=sparse_metadata.device,
+    )
+    prefix = sparse_metadata.shape[:-2]
+    encoded = torch.empty(prefix + (2, 4, 16), dtype=torch.int64,
+                          device=sparse_metadata.device)
+    shifts = torch.arange(4, dtype=torch.int64,
+                          device=sparse_metadata.device) * 4
+    for k_tile in range(2):
+        for warp in range(4):
+            for metadata_group in range(8):
+                for thread_in_group in range(2):
+                    metadata_row = warp * 16 + metadata_group
+                    quartet_base = k_tile * 8 + thread_in_group * 4
+                    lower = nibble_table[
+                        sparse_metadata[
+                            ..., metadata_row, quartet_base : quartet_base + 4
+                        ].to(torch.int64)
+                    ]
+                    upper = nibble_table[
+                        sparse_metadata[
+                            ..., metadata_row + 8,
+                            quartet_base : quartet_base + 4,
+                        ].to(torch.int64)
+                    ]
+                    word = (lower << shifts).sum(dim=-1)
+                    word |= (upper << (shifts + 16)).sum(dim=-1)
+                    encoded[
+                        ..., k_tile, warp,
+                        metadata_group * 2 + thread_in_group,
+                    ] = word
+    return encoded.to(torch.int32)
 
 
 def dense_to_hybrid_block_sparse(
@@ -221,6 +260,9 @@ def dense_to_hybrid_block_sparse(
     sparse_metadata = pair_to_code[
         keep_indices[..., 0], keep_indices[..., 1]
     ].to(torch.uint8)
+    hardware_metadata = None
+    if layout.block_h == 64 and layout.block_w == 64:
+        hardware_metadata = _encode_lane_ready_metadata(sparse_metadata)
 
     return HybridBlockSparseWeight(
         original_shape=tuple(weight.shape),
@@ -229,6 +271,11 @@ def dense_to_hybrid_block_sparse(
         dense_values=_restore_leading_shape(dense_blocks, leading_shape),
         sparse_values=_restore_leading_shape(sparse_values, leading_shape),
         sparse_metadata=_restore_leading_shape(sparse_metadata, leading_shape),
+        hardware_metadata=(
+            None
+            if hardware_metadata is None
+            else _restore_leading_shape(hardware_metadata, leading_shape)
+        ),
     )
 
 
