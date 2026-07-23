@@ -35,7 +35,7 @@ historical results remain in `hybrid_sparse_tensorcore_performance.md`.
 ## Performance Data
 
 Performance measurements are maintained separately in
-[`hybrid_sparse_performance.csv`](hybrid_sparse_performance.csv). The CSV only
+[`hybrid_sparse_performance.xlsx`](hybrid_sparse_performance.xlsx). The workbook
 records fused-kernel total latency, DeepGEMM latency, and
 `DeepGEMM / Total` speedup.
 
