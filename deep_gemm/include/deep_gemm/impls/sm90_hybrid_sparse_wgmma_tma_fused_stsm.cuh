@@ -3,6 +3,7 @@
 // Hybrid sparse 64x64 fused mainloop with a BF16 STSM/TMA epilogue.
 
 #include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_direct.cuh>
+#include <deep_gemm/ptx/ld_st.cuh>
 
 template <int = 0>
 __global__ __launch_bounds__(kThreads, 1)
