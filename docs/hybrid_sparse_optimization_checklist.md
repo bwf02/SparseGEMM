@@ -12,7 +12,7 @@
 - [ ] **P0：合并多个 K tile**，先测试 `merge_k=2`，减少 WGMMA `commit_group/wait_group` 的执行频率。
 - [ ] **P0：重分配 warpgroup 寄存器**，减少 producer 寄存器并增加 math warpgroup 可用寄存器。
 - [ ] **P1：CTA tile swizzle**，调整 tile 调度顺序以提高 activation 或 weight 的 L2 复用率。
-- [ ] **P1：shape-aware dispatch**，小 M 使用 `64 x 64`，较大 M 根据实测选择 `128 x 128` 等版本。
+- [ ] **P1：shape-aware dispatch**，保持 `64 x 64` 为默认路径，仅继续评估 fused、lane-ready 的 `128 x 128` 等候选版本。
 - [ ] **P1：grouped GEMM persistent scheduler**，让固定数量的 CTA 持续领取不均匀 expert tile。
 - [ ] **P2：persistent epilogue overlap**，让 TMA store 与同一 CTA 的下一 output tile mainloop 重叠。
 - [ ] **P3：TMA multicast/CTA cluster**，仅在 operand 复用和并行 wave 足够时评估 cluster 共享收益。
@@ -29,4 +29,4 @@
 - [x] **BF16 STSM/TMA epilogue**，先转换 BF16，再用 STSM 写入 swizzled shared memory，最后由 TMA 写回 global memory。
 - [x] **普通 GEMM persistent scheduler**，使用 `3 CTA/SM` 的 grid-stride tile 调度；单独使用时仍慢于静态 STSM，作为后续 persistent 优化基础保留。
 - [x] **预编码硬件 metadata**，weight conversion 直接生成 lane-ready WGMMA.SP words，移除 mainloop byte-code 解码，并降低寄存器、shared memory 和 warp 指令量。
-- [x] **`128 x 32` weight tile + 三级 TMA pipeline**，仅 M=2048 出现收益且整体仍慢于当前 `64 x 64` fused kernel，因此不加入 shape-aware dispatch。
+- [x] **`128 x 32` weight tile + 三级 TMA pipeline**，Stage 3 仅在 M=2048 相对 Stage 2 改善 `8.8%`，其他 M 持平或回退，且整体仍慢于当前 `64 x 64` fused kernel，因此不加入 shape-aware dispatch。
