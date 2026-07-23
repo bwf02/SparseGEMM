@@ -11,6 +11,7 @@ from sparse_gemm.hybrid_sparse import (
     dense_to_hybrid_block_sparse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_direct,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent,
     hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch,
 )
 
@@ -24,6 +25,7 @@ SEPARATE_KERNEL_NAMES = (
 )
 FUSED_DIRECT_KERNEL_NAME = "hybrid_sparse_fused_wgmma_tma_direct"
 FUSED_STSM_KERNEL_NAME = "hybrid_sparse_fused_wgmma_tma_stsm"
+PERSISTENT_KERNEL_NAME = "hybrid_sparse_fused_wgmma_tma_stsm_persistent"
 STANDARD_M = (128, 256, 512, 1024, 2048, 4096)
 
 
@@ -52,6 +54,7 @@ def benchmark_shape(
     )
     fused_out = torch.empty_like(separate_out)
     stsm_out = torch.empty_like(separate_out)
+    persistent_out = torch.empty_like(separate_out)
     deepgemm_out = torch.empty_like(separate_out)
 
     hybrid_block_sparse_gemm_wgmma_tma_metadata_prefetch(
@@ -63,10 +66,14 @@ def benchmark_shape(
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm(
         activation, packed_weight, out=stsm_out
     )
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent(
+        activation, packed_weight, out=persistent_out
+    )
     deep_gemm.bf16_gemm_nt(activation, dense_weight, deepgemm_out)
     torch.cuda.synchronize()
     torch.testing.assert_close(fused_out, separate_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(stsm_out, fused_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(persistent_out, stsm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(fused_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     separate_times = bench_kineto(
@@ -96,6 +103,15 @@ def benchmark_shape(
         suppress_kineto_output=True,
         flush_l2=flush_l2,
     )
+    persistent_time = bench_kineto(
+        lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent(
+            activation, packed_weight, out=persistent_out
+        ),
+        PERSISTENT_KERNEL_NAME,
+        num_tests=num_tests,
+        suppress_kineto_output=True,
+        flush_l2=flush_l2,
+    )
     deepgemm_time = bench_kineto(
         lambda: deep_gemm.bf16_gemm_nt(activation, dense_weight, deepgemm_out),
         "bf16_gemm",
@@ -107,10 +123,10 @@ def benchmark_shape(
     print(
         f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
         f"{separate_total * 1e6:11.2f} {fused_time * 1e6:15.2f} "
-        f"{stsm_time * 1e6:14.2f} "
+        f"{stsm_time * 1e6:14.2f} {persistent_time * 1e6:14.2f} "
         f"{deepgemm_time * 1e6:11.2f} "
         f"{safe_divide(fused_time, stsm_time):10.3f}x "
-        f"{safe_divide(deepgemm_time, stsm_time):8.3f}x"
+        f"{safe_divide(deepgemm_time, persistent_time):8.3f}x"
     )
 
 
@@ -149,7 +165,7 @@ def main() -> None:
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(
         "     M      N      K | separate(us) fused-direct(us) fused-stsm(us) "
-        "deepgemm(us) direct/stsm dg/stsm"
+        "persistent(us) deepgemm(us) direct/stsm dg/persistent"
     )
     for shape in shapes:
         benchmark_shape(
