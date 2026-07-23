@@ -439,6 +439,28 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_merge_k2
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the lane-ready persistent kernel with three TMA stages."""
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError(
+            "packed_weight does not contain lane-ready hardware metadata"
+        )
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3",
+        metadata=metadata,
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_128x64(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
