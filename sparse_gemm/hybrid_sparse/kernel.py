@@ -447,6 +447,22 @@ def hybrid_block_sparse_gemm_wgmma_tma_block128x32(
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_block128x32_stage3(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 128x32 weight-block kernel with a three-stage TMA pipeline."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_block128x32_stage3",
+        block_h=128,
+        block_w=32,
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_block128x32_output128x128(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
