@@ -28,9 +28,9 @@
   do not include those values in new kernel comparison tables.
 - For grouped GEMM, report the total valid M and use workloads whose total
   valid M matches the same standard sweep where practical.
-- Record new optimization results and iteration notes in
-  `docs/hybrid_sparse_optimization_results.md`. Do not append the new standard
-  sweep to `docs/hybrid_sparse_tensorcore_performance.md`, which is historical.
+- Record new performance measurements only in
+  `docs/hybrid_sparse_performance.xlsx`. The Markdown performance documents are
+  historical archives and must not be updated with new benchmark results.
 
 ## JIT Kernel Organization
 

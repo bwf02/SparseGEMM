@@ -1,5 +1,8 @@
 # Hybrid Sparse Kernel Optimization Results
 
+> Archived: this document is no longer maintained. New performance results are
+> recorded only in `hybrid_sparse_performance.xlsx`.
+
 ## Scope
 
 This document records optimization results produced with the standard M sweep:

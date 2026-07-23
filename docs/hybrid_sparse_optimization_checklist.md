@@ -1,7 +1,7 @@
 # Hybrid Sparse Kernel Optimization Checklist
 
-勾选表示实验已经完成，不代表该方案最终被采用，详细数据与结论见
-[`hybrid_sparse_optimization_results.md`](hybrid_sparse_optimization_results.md)。
+勾选表示实验已经完成，不代表该方案最终被采用。性能数据见
+[`hybrid_sparse_performance.xlsx`](hybrid_sparse_performance.xlsx)。
 
 标准测试使用 NVIDIA H20、BF16/FP32 accumulation，以及
 `M = 128, 256, 512, 1024, 2048, 4096`。
