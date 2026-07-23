@@ -365,6 +365,20 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_direct(
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the fused 64x64 mainloop with a BF16 STSM/TMA epilogue."""
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm",
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_128x64(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
