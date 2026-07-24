@@ -26,6 +26,10 @@ REG_REALLOC_KERNEL = (
 CUBLASLT_KERNEL_NAMES = ("nvjet", "gemv", "gemm")
 
 
+def safe_ratio(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator else float("nan")
+
+
 def benchmark_shape(shape: Shape, num_tests: int, flush_l2: bool) -> None:
     torch.manual_seed(0)
     layout = HybridBlockSparseLayout(64, 64, 1, 2)
@@ -102,8 +106,8 @@ def benchmark_shape(shape: Shape, num_tests: int, flush_l2: bool) -> None:
         f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
         f"{stage3_time * 1e6:10.2f} {reg_realloc_time * 1e6:12.2f} "
         f"{deepgemm_time * 1e6:10.2f} {cublas_time * 1e6:10.2f} "
-        f"{stage3_time / reg_realloc_time:11.3f}x "
-        f"{deepgemm_time / reg_realloc_time:10.3f}x"
+        f"{safe_ratio(stage3_time, reg_realloc_time):11.3f}x "
+        f"{safe_ratio(deepgemm_time, reg_realloc_time):10.3f}x"
     )
 
 
