@@ -12,7 +12,6 @@
 - [ ] **P1：CTA tile swizzle**，调整 tile 调度顺序以提高 activation 或 weight 的 L2 复用率。
 - [ ] **P1：shape-aware dispatch**，保持 `64 x 64` 为默认路径，仅继续评估 fused、lane-ready 的 `128 x 128` 等候选版本。
 - [ ] **P1：grouped GEMM persistent scheduler**，让固定数量的 CTA 持续领取不均匀 expert tile。
-- [ ] **P2：persistent epilogue overlap**，让 TMA store 与同一 CTA 的下一 output tile mainloop 重叠。
 - [ ] **P3：TMA multicast/CTA cluster**，仅在 operand 复用和并行 wave 足够时评估 cluster 共享收益。
 
 ## 已完成
@@ -31,3 +30,8 @@
 - [x] **`merge_k=2` WGMMA group**，CTA barrier stall 从 `67.1%` 降至 `57.5%`，但 NCU duration 增加 `4.9%` 且多数 shape 回退，因此保留实现但不采用。
 - [x] **`64 x 64` weight block 的 TMA pipeline depth**，Stage 3 的 NCU duration 从 `62.24 us` 降至 `60.93 us`；Stage 4/5 将理论 occupancy 降至 `25%` 并造成中大 M 回退，因此选择 Stage 3。
 - [x] **warpgroup 寄存器重分配**，producer/math 分别设置为 `40/128`，但 kernel 仍使用 `60 registers/thread`，两次配对 NCU 的平均延迟变化小于 `0.1%`，因此保留实现但不采用。
+- [x] **direct lane-ready metadata load**，shared memory 从 `66.56 KB` 降至 `58.37 KB`，但 long-scoreboard 从 `1.69` 升至 `2.88 cycles/inst`，因此不采用。
+- [x] **persistent epilogue overlap**，CTA barrier stall 从 `16.05` 降至 `7.03 cycles/inst`，但延迟仅改善约 `0.3%`，作为后续 metadata 优化基础保留。
+- [x] **metadata register prefetch**，long-scoreboard 小幅下降，但指令数增加约 `5.5%` 且 NCU 延迟回退，因此不采用。
+- [x] **stage-local metadata TMA**，降低 math warp 的 global-load stall，但每个 sparse block 增加一次 TMA transaction，普通 benchmark 改善而 NCU cache-control 结果回退。
+- [x] **producer-warp metadata copy**，用连续 `512 B` vector copy 替代额外 metadata TMA；NCU 延迟从 `62.05 us` 降至 `59.87 us`，为当前最佳 metadata 路径。
