@@ -14,6 +14,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_direct_metadata,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_merge_k2,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy,
@@ -478,7 +479,7 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         mask = make_mask(weight, layout, (1,))
         packed = dense_to_hybrid_block_sparse(weight, mask, layout)
 
-        for m in (1, 31, 32, 33, 63, 64, 65, 128, 1024):
+        for m in (1, 31, 32, 33, 47, 48, 49, 63, 64, 65, 128, 1024):
             with self.subTest(m=m):
                 activation = torch.randn(
                     m, 256, device="cuda", dtype=torch.bfloat16
@@ -523,6 +524,14 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 )
                 torch.testing.assert_close(
                     group_stage, expected, rtol=1e-2, atol=1e-2
+                )
+                group_stage_48 = (
+                    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64(
+                        activation, packed
+                    )
+                )
+                torch.testing.assert_close(
+                    group_stage_48, expected, rtol=1e-2, atol=1e-2
                 )
 
     def test_lane_ready_reg_realloc_matches_reference(self):
@@ -700,6 +709,14 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         )
         torch.testing.assert_close(
             group_stage, expected, rtol=1e-2, atol=1e-2
+        )
+        group_stage_48 = (
+            hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64(
+                activation, packed
+            )
+        )
+        torch.testing.assert_close(
+            group_stage_48, expected, rtol=1e-2, atol=1e-2
         )
 
     def test_rejects_non_64_block_layout(self):
