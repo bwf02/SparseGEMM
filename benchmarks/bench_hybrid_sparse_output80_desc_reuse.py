@@ -1,0 +1,111 @@
+"""Benchmark output80 GMMA descriptor reuse for large Qwen M shapes."""
+
+import argparse
+import json
+import statistics
+from pathlib import Path
+
+import torch
+
+import deep_gemm
+from deep_gemm.testing import bench_kineto
+from sparse_gemm.hybrid_sparse import (
+    HybridBlockSparseLayout,
+    dense_to_hybrid_block_sparse,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath_desc_reuse,
+)
+
+from bench_hybrid_sparse import make_hybrid_mask
+
+
+def measure(function, kernel_name: str, num_tests: int) -> float:
+    return bench_kineto(
+        function,
+        kernel_name,
+        num_tests=num_tests,
+        suppress_kineto_output=True,
+        flush_l2=False,
+    ) * 1e6
+
+
+def benchmark(m: int, repeats: int, num_tests: int) -> dict:
+    torch.manual_seed(0)
+    n, k = 1408, 2048
+    layout = HybridBlockSparseLayout(64, 64, 1, 2)
+    activation = torch.randn(m, k, device="cuda", dtype=torch.bfloat16)
+    source_weight = torch.randn(n, k, device="cuda", dtype=torch.bfloat16)
+    packed = dense_to_hybrid_block_sparse(
+        source_weight, make_hybrid_mask(source_weight, layout), layout
+    )
+    dense_weight = packed.to_dense().contiguous()
+    baseline_out = torch.empty(m, n, device="cuda", dtype=torch.bfloat16)
+    reuse_out = torch.empty_like(baseline_out)
+    deepgemm_out = torch.empty_like(baseline_out)
+    baseline_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath(
+        activation, packed, out=baseline_out
+    )
+    reuse_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath_desc_reuse(
+        activation, packed, out=reuse_out
+    )
+    deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
+        activation, dense_weight, deepgemm_out
+    )
+    measurements = (
+        (
+            "baseline",
+            baseline_call,
+            "hybrid_sparse_group_stage_output80x64_nm12_fastpath",
+        ),
+        (
+            "desc_reuse",
+            reuse_call,
+            "hybrid_sparse_group_stage_output80x64_nm12_fastpath_desc_reuse",
+        ),
+        ("deepgemm", deepgemm_call, "bf16_gemm"),
+    )
+    for _, function, _ in measurements:
+        function()
+    torch.cuda.synchronize()
+    torch.testing.assert_close(reuse_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    timings = {name: [] for name, _, _ in measurements}
+    for repeat in range(repeats):
+        ordered = measurements if repeat % 2 == 0 else tuple(reversed(measurements))
+        for name, function, kernel_name in ordered:
+            timings[name].append(measure(function, kernel_name, num_tests))
+    medians = {name: statistics.median(values) for name, values in timings.items()}
+    return {
+        "m": m,
+        "n": n,
+        "k": k,
+        "timings_us": timings,
+        "medians_us": medians,
+        "reuse_over_baseline": medians["baseline"] / medians["desc_reuse"],
+        "speedup_over_deepgemm": medians["deepgemm"] / medians["desc_reuse"],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--m", type=int, nargs="+", default=[512, 1024])
+    parser.add_argument("--repeats", type=int, default=7)
+    parser.add_argument("--num-tests", type=int, default=300)
+    parser.add_argument("--json-output", type=Path)
+    args = parser.parse_args()
+    results = [benchmark(m, args.repeats, args.num_tests) for m in args.m]
+    print("     M      N      K | baseline reuse DeepGEMM reuse/base DG/reuse")
+    for result in results:
+        medians = result["medians_us"]
+        print(
+            f"{result['m']:6d} {result['n']:6d} {result['k']:6d} | "
+            f"{medians['baseline']:8.2f} {medians['desc_reuse']:5.2f} "
+            f"{medians['deepgemm']:8.2f} {result['reuse_over_baseline']:10.3f}x "
+            f"{result['speedup_over_deepgemm']:8.3f}x"
+        )
+    if args.json_output is not None:
+        args.json_output.parent.mkdir(parents=True, exist_ok=True)
+        args.json_output.write_text(json.dumps(results, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()

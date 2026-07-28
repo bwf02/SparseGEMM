@@ -28,6 +28,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_async_group3,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath_desc_reuse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath_desc_reuse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output88x64_nm12_fastpath_desc_reuse,
@@ -115,6 +116,20 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
 
         expected = hybrid_block_sparse_gemm_ref(activation, packed)
         actual = hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output88x64_nm12_fastpath_desc_reuse(
+            activation, packed
+        )
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
+    def test_output80_descriptor_reuse_matches_reference(self):
+        torch.manual_seed(126)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(128, 256, device="cuda", dtype=torch.bfloat16)
+        mask = make_mask(weight, layout, (1,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+        activation = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
+
+        expected = hybrid_block_sparse_gemm_ref(activation, packed)
+        actual = hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath_desc_reuse(
             activation, packed
         )
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
