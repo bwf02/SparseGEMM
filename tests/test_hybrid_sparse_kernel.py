@@ -21,6 +21,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_merge2,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_splitk2_fused_reduce,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath,
@@ -81,6 +82,43 @@ def make_grouped_mask(weight, layout, sparse_block_ids):
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
 class TestHybridSparseNaiveKernel(unittest.TestCase):
+    def test_splitk2_fused_reduce_matches_reference_and_resets_counters(self):
+        torch.manual_seed(124)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(128, 256, device="cuda", dtype=torch.bfloat16)
+        mask = make_mask(weight, layout, (1,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+
+        for m in (1, 63, 64, 65, 128, 129):
+            with self.subTest(m=m):
+                activation = torch.randn(
+                    m, 256, device="cuda", dtype=torch.bfloat16
+                )
+                expected = hybrid_block_sparse_gemm_ref(activation, packed)
+                out = torch.empty(
+                    m, 128, device="cuda", dtype=torch.bfloat16
+                )
+                partial = torch.empty(
+                    2, m, 128, device="cuda", dtype=torch.float32
+                )
+                counters = torch.zeros(
+                    ((m + 63) // 64) * 2,
+                    device="cuda",
+                    dtype=torch.int32,
+                )
+                for _ in range(2):
+                    actual = hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_splitk2_fused_reduce(
+                        activation,
+                        packed,
+                        out=out,
+                        partial=partial,
+                        tile_counters=counters,
+                    )
+                    torch.testing.assert_close(
+                        actual, expected, rtol=1e-2, atol=1e-2
+                    )
+                    self.assertEqual(torch.count_nonzero(counters).item(), 0)
+
     def test_tensorcore_matches_reference_for_all_metadata_pairs(self):
         torch.manual_seed(100)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)

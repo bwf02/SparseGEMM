@@ -725,6 +725,105 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_st
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_splitk2_fused_reduce(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+    partial: Optional[torch.Tensor] = None,
+    tile_counters: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run split-K2 with FP32 partials and an in-kernel final reduction."""
+    if not isinstance(packed_weight, HybridBlockSparseWeight):
+        raise TypeError("packed_weight must be a HybridBlockSparseWeight")
+    if len(packed_weight.original_shape) != 2:
+        raise ValueError("split-K2 GEMM requires packed weight shape [N, K]")
+    if (
+        packed_weight.layout.block_h != 64
+        or packed_weight.layout.block_w != 64
+        or packed_weight.layout.block_n != 1
+        or packed_weight.layout.block_m != 2
+    ):
+        raise ValueError("split-K2 GEMM requires 64x64 blocks with N:M=1:2")
+    if a.dim() != 2:
+        raise ValueError(f"activation must have shape [M, K], got {tuple(a.shape)}")
+    if a.dtype != torch.bfloat16 or not a.is_cuda or not a.is_contiguous():
+        raise ValueError("activation must be contiguous BF16 on CUDA")
+
+    n, k = packed_weight.original_shape
+    m = a.shape[0]
+    if a.shape[1] != k:
+        raise ValueError(f"activation K ({a.shape[1]}) must match weight K ({k})")
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError("packed_weight does not contain lane-ready hardware metadata")
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    packed_tensors = (
+        packed_weight.block_selector,
+        packed_weight.dense_values,
+        packed_weight.sparse_values,
+        metadata,
+    )
+    if packed_weight.dense_values.dtype != torch.bfloat16:
+        raise TypeError("packed weight values must have dtype torch.bfloat16")
+    if any(tensor.device != a.device for tensor in packed_tensors):
+        raise ValueError("all packed tensors must be on the activation device")
+    if any(not tensor.is_contiguous() for tensor in packed_tensors):
+        raise ValueError("all packed tensors must be contiguous")
+
+    if out is None:
+        out = torch.empty((m, n), dtype=torch.bfloat16, device=a.device)
+    elif (
+        out.shape != (m, n)
+        or out.dtype != torch.bfloat16
+        or out.device != a.device
+        or not out.is_contiguous()
+    ):
+        raise ValueError("out must be contiguous BF16 with shape [M, N] on CUDA")
+
+    partial_shape = (2, m, n)
+    if partial is None:
+        partial = torch.empty(partial_shape, dtype=torch.float32, device=a.device)
+    elif (
+        partial.shape != partial_shape
+        or partial.dtype != torch.float32
+        or partial.device != a.device
+        or not partial.is_contiguous()
+    ):
+        raise ValueError(
+            "partial must be contiguous FP32 with shape [2, M, N] on CUDA"
+        )
+
+    num_tiles = ((m + 63) // 64) * ((n + 63) // 64)
+    if tile_counters is None:
+        tile_counters = torch.zeros(num_tiles, dtype=torch.int32, device=a.device)
+    elif (
+        tile_counters.shape != (num_tiles,)
+        or tile_counters.dtype != torch.int32
+        or tile_counters.device != a.device
+        or not tile_counters.is_contiguous()
+    ):
+        raise ValueError(
+            "tile_counters must be contiguous INT32 with one entry per output tile"
+        )
+
+    import deep_gemm
+
+    deep_gemm._C.hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_splitk2_fused_reduce(
+        a,
+        packed_weight.block_selector,
+        packed_weight.dense_values,
+        packed_weight.sparse_values,
+        metadata,
+        partial,
+        tile_counters,
+        out,
+        packed_weight.layout.block_n,
+        packed_weight.layout.block_m,
+    )
+    return out
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
