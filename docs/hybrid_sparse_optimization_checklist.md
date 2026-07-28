@@ -44,3 +44,12 @@
 - [x] **`1:2` block dispatch fastpath**，移除通用 block loop 和 popcount，同时保留其他 N:M 的通用 fallback。
 - [x] **group-stage metadata TMA**，消除 L1TEX scoreboard 并将 shared-store bank conflicts 从 `6379` 降至 `697`，但 warm-cache benchmark 无收益，因此不进入默认 dispatch。
 - [x] **shape-aware dispatch**，为 8 个已验证 Qwen MoE shape 固化 `48/64/80/96/128` token tile 选择，其他 shape 和非 `1:2` N:M 回退到通用 group-stage。
+
+## 本轮调优
+
+- [x] **GMMA descriptor 复用**，在 output80/96/128 路径中移除 mainloop 重复构造，并将 output80 用于 `M=512/1024, N=1408`。
+- [x] **output128 block-group pipeline**，将每个 outer block group 合并为一次流水迭代，并用于 `M=256/512, N=2048`。
+- [x] **output88 尾波适配**，减少 `M=256, N=1408` 的无效 token 计算，总延迟从 output96 的 `13.38 us` 降至 `12.52 us`。
+- [x] **compact output128 CTA**，指令数下降但 occupancy 和延迟回退，因此保留实现但不进入 dispatch。
+- [x] **小 M 与中 M 反例验证**，output48 不适合 `M=128, N=2048`，output88 不适合 `M=512, N=1408`，两者均不进入对应 dispatch。
+- [x] **8 个指定 shape 最终复测**，每个 shape 完成 7 轮、每轮 300 次配对计时，相对 DeepGEMM 的 speedup 为 `1.068x–1.154x`。
