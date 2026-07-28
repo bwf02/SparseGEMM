@@ -10,7 +10,6 @@
 
 - [ ] **P0：联合 K-block merge 与更深 pipeline**，仅在增加 TMA stage 后重新评估 `merge_k=2`，避免两级 buffer 成对释放阻断预取。
 - [ ] **P1：CTA tile swizzle**，调整 tile 调度顺序以提高 activation 或 weight 的 L2 复用率。
-- [ ] **P1：shape-aware dispatch**，小 M 保持 `64 x 64` output tile，大 M 选择当前更快的 `128 x 64` output tile。
 - [ ] **P1：grouped GEMM persistent scheduler**，让固定数量的 CTA 持续领取不均匀 expert tile。
 - [ ] **P3：TMA multicast/CTA cluster**，仅在 operand 复用和并行 wave 足够时评估 cluster 共享收益。
 
@@ -40,3 +39,8 @@
 - [x] **按 block group 广播完整 selector**，shared control load 数量下降，但稳定计时略慢于 stage-kind，因此保留实现但不采用。
 - [x] **验证 `1.25x` 目标**，在 `4096 x 2048 x 1408` 上三轮各 100 次配对计时中，stage-kind 相对 DeepGEMM 为 `1.261x`、`1.259x`、`1.262x`。
 - [x] **验证全部标准 shape**，12 个 shape 均完成重复配对测试，其中 8 个快于 DeepGEMM、2 个达到至少 `1.25x`；`M=512/1024` 加测至 7 轮。
+- [x] **整组 N:M staging**，一次加载并提交完整 outer block group，`M=128,N=1408,K=2048` 的 NCU 指令数下降 `36%`。
+- [x] **小 M token tile 调优**，新增 `48 x 64`、`80 x 64` 和 `96 x 64` output tile，其中 48/96 分别解决 M=128/256 的 CTA wave 不足或尾波问题。
+- [x] **`1:2` block dispatch fastpath**，移除通用 block loop 和 popcount，同时保留其他 N:M 的通用 fallback。
+- [x] **group-stage metadata TMA**，消除 L1TEX scoreboard 并将 shared-store bank conflicts 从 `6379` 降至 `697`，但 warm-cache benchmark 无收益，因此不进入默认 dispatch。
+- [x] **shape-aware dispatch**，为 8 个已验证 Qwen MoE shape 固化 `48/64/80/96/128` token tile 选择，其他 shape 和非 `1:2` N:M 回退到通用 group-stage。
