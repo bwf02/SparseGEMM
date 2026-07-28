@@ -17,10 +17,23 @@
 #define HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE 0
 #endif
 
+#ifndef HYBRID_SPARSE_OUTPUT128X64_THREADS
+#define HYBRID_SPARSE_OUTPUT128X64_THREADS 384
+#endif
+
+#ifndef HYBRID_SPARSE_OUTPUT128X64_BARRIER_WARP
+#define HYBRID_SPARSE_OUTPUT128X64_BARRIER_WARP 8
+#endif
+
+#ifndef HYBRID_SPARSE_OUTPUT128X64_PRODUCER_WARP
+#define HYBRID_SPARSE_OUTPUT128X64_PRODUCER_WARP 10
+#endif
+
 constexpr int kOutputTileMProducerMetadataCopy128x64 = 128;
 constexpr int kOutputTileNProducerMetadataCopy128x64 = 64;
 constexpr int kMathThreadsProducerMetadataCopy128x64 = 256;
-constexpr int kThreadsProducerMetadataCopy128x64 = 384;
+constexpr int kThreadsProducerMetadataCopy128x64 =
+    HYBRID_SPARSE_OUTPUT128X64_THREADS;
 constexpr int kPipelineStagesProducerMetadataCopy128x64 = 3;
 
 __device__ __forceinline__ void advance_pipeline_producer_metadata_copy_128x64(
@@ -115,7 +128,7 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
         __shfl_sync(0xffffffff, activation_desc.reg32_[0], 0);
 #endif
 
-    if (warp == 8 && lane == 0) {
+    if (warp == HYBRID_SPARSE_OUTPUT128X64_BARRIER_WARP && lane == 0) {
 #pragma unroll
         for (int stage = 0;
              stage < kPipelineStagesProducerMetadataCopy128x64; ++stage) {
@@ -124,7 +137,8 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
         }
         cutlass::arch::fence_barrier_init();
     }
-    if (warp == 10 && cute::elect_one_sync()) {
+    if (warp == HYBRID_SPARSE_OUTPUT128X64_PRODUCER_WARP &&
+        cute::elect_one_sync()) {
         cute::prefetch_tma_descriptor(&tensor_map_activation);
         cute::prefetch_tma_descriptor(&tensor_map_dense);
         cute::prefetch_tma_descriptor(&tensor_map_sparse);
@@ -146,7 +160,7 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
             tile_n * kOutputTileNProducerMetadataCopy128x64;
         const int block_row = tile_n;
 
-        if (warp == 10) {
+        if (warp == HYBRID_SPARSE_OUTPUT128X64_PRODUCER_WARP) {
             const bool is_leader = cute::elect_one_sync();
             for (int block_group = 0; block_group < block_groups;
                  ++block_group) {
@@ -405,3 +419,6 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
 #undef HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME
 #undef HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND
 #undef HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE
+#undef HYBRID_SPARSE_OUTPUT128X64_THREADS
+#undef HYBRID_SPARSE_OUTPUT128X64_BARRIER_WARP
+#undef HYBRID_SPARSE_OUTPUT128X64_PRODUCER_WARP
