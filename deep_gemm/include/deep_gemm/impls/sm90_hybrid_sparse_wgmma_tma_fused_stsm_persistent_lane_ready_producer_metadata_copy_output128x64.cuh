@@ -88,7 +88,7 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
         smem + kPipelineStagesProducerMetadataCopy128x64 * kStageBytes);
     auto empty_barrier =
         full_barrier + kPipelineStagesProducerMetadataCopy128x64;
-    auto stage_kind = reinterpret_cast<volatile int*>(
+    auto stage_control = reinterpret_cast<volatile unsigned long long*>(
         empty_barrier + kPipelineStagesProducerMetadataCopy128x64);
     auto smem_output =
         reinterpret_cast<__nv_bfloat16*>(smem + kOutputOffset);
@@ -143,9 +143,13 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                     const bool is_sparse =
                         (selector >> local_block) & 1ULL;
                     if constexpr (HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND) {
-                        if (is_leader) {
-                            stage_kind[producer_stage] =
-                                static_cast<int>(is_sparse);
+                        if (is_leader &&
+                            (HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND == 1 ||
+                             local_block == 0)) {
+                            stage_control[producer_stage] =
+                                HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND == 1
+                                ? static_cast<unsigned long long>(is_sparse)
+                                : selector;
                         }
                         __syncwarp();
                     }
@@ -215,7 +219,7 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
             for (int block_group = 0; block_group < block_groups;
                  ++block_group) {
                 unsigned long long selector = 0;
-                if constexpr (!HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND) {
+                if constexpr (HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND == 0) {
                     selector = static_cast<unsigned long long>(
                         block_selector[
                             block_row * block_groups + block_group]);
@@ -223,9 +227,15 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                 for (int local_block = 0; local_block < block_m;
                      ++local_block) {
                     full_barrier[consumer_stage].wait(consumer_phase);
+                    if constexpr (
+                        HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND == 2) {
+                        if (local_block == 0)
+                            selector = stage_control[consumer_stage];
+                    }
                     const bool is_sparse =
-                        HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND
-                        ? static_cast<bool>(stage_kind[consumer_stage])
+                        HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND == 1
+                        ? static_cast<bool>(
+                            stage_control[consumer_stage])
                         : static_cast<bool>(
                             (selector >> local_block) & 1ULL);
 #pragma unroll
