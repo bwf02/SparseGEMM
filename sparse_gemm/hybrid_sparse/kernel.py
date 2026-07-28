@@ -1227,7 +1227,7 @@ def _select_hybrid_block_sparse_gemm_wgmma_tuned(
             (512, 1408, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
             (1024, 1408, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
             (128, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7,
-            (256, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse,
+            (256, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse,
             (512, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
             (1024, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath,
         }
