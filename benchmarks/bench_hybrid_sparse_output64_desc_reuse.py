@@ -17,6 +17,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_async_group3,
 )
 
 from bench_hybrid_sparse import Shape, make_hybrid_mask
@@ -53,6 +54,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     reuse_out = torch.empty_like(generic_out)
     fixed_shape_out = torch.empty_like(generic_out)
     stage7_out = torch.empty_like(generic_out)
+    async_group3_out = torch.empty_like(generic_out)
     deepgemm_out = torch.empty_like(generic_out)
     generic_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64(
         activation, packed, out=generic_out
@@ -69,6 +71,9 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     stage7_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7(
         activation, packed, out=stage7_out
     )
+    async_group3_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_async_group3(
+        activation, packed, out=async_group3_out
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_out
     )
@@ -79,11 +84,19 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         reuse_call,
         fixed_shape_call,
         stage7_call,
+        async_group3_call,
         deepgemm_call,
     ):
         function()
     torch.cuda.synchronize()
-    for actual in (generic_out, fast_out, reuse_out, fixed_shape_out, stage7_out):
+    for actual in (
+        generic_out,
+        fast_out,
+        reuse_out,
+        fixed_shape_out,
+        stage7_out,
+        async_group3_out,
+    ):
         torch.testing.assert_close(actual, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     measurements = (
@@ -108,6 +121,11 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
             stage7_call,
             "hybrid_sparse_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7",
         ),
+        (
+            "async_group3",
+            async_group3_call,
+            "hybrid_sparse_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_async_group3",
+        ),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
     timings = {name: [] for name, _, _ in measurements}
@@ -130,6 +148,8 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         "fixed_shape_speedup_over_deepgemm": medians["deepgemm"] / medians["fixed_shape"],
         "stage7_over_fixed_shape": medians["fixed_shape"] / medians["stage7"],
         "stage7_speedup_over_deepgemm": medians["deepgemm"] / medians["stage7"],
+        "async_group3_over_stage7": medians["stage7"] / medians["async_group3"],
+        "async_group3_speedup_over_deepgemm": medians["deepgemm"] / medians["async_group3"],
     }
 
 
@@ -145,8 +165,8 @@ def main() -> None:
 
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(
-        "     M      N      K | generic fastpath reuse fixed stage7 DeepGEMM "
-        "stage7/fixed DG/stage7"
+        "     M      N      K | generic fastpath reuse fixed stage7 async3 "
+        "DeepGEMM async3/stage7 DG/async3"
     )
     results = []
     for m in args.m:
@@ -159,9 +179,10 @@ def main() -> None:
             f"{medians['generic']:7.2f} {medians['fastpath']:8.2f} "
             f"{medians['desc_reuse']:5.2f} {medians['fixed_shape']:5.2f} "
             f"{medians['stage7']:6.2f} "
+            f"{medians['async_group3']:6.2f} "
             f"{medians['deepgemm']:8.2f} "
-            f"{result['stage7_over_fixed_shape']:12.3f}x "
-            f"{result['stage7_speedup_over_deepgemm']:9.3f}x",
+            f"{result['async_group3_over_stage7']:13.3f}x "
+            f"{result['async_group3_speedup_over_deepgemm']:9.3f}x",
             flush=True,
         )
 
