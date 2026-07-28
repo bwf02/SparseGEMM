@@ -22,6 +22,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind_merge_k3_stage6,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output64x64_stage_kind,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output64x64_stage_kind_async_group3,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_direct_metadata_epilogue_overlap,
@@ -505,6 +506,14 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 )
                 torch.testing.assert_close(
                     wide, expected, rtol=1e-2, atol=1e-2
+                )
+                async_group3 = (
+                    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output64x64_stage_kind_async_group3(
+                        activation, packed
+                    )
+                )
+                torch.testing.assert_close(
+                    async_group3, expected, rtol=1e-2, atol=1e-2
                 )
 
     def test_lane_ready_reg_realloc_matches_reference(self):
