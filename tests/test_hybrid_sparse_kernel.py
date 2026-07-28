@@ -20,6 +20,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_selector,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind_merge_k3_stage6,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_direct_metadata_epilogue_overlap,
@@ -269,7 +270,6 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 torch.testing.assert_close(
                     actual, expected, rtol=1e-2, atol=1e-2
                 )
-
     def test_lane_ready_stage3_matches_reference(self):
         torch.manual_seed(110)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)
@@ -488,6 +488,14 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 )
                 torch.testing.assert_close(
                     actual, expected, rtol=1e-2, atol=1e-2
+                )
+                merged = (
+                    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind_merge_k3_stage6(
+                        activation, packed
+                    )
+                )
+                torch.testing.assert_close(
+                    merged, expected, rtol=1e-2, atol=1e-2
                 )
 
     def test_lane_ready_reg_realloc_matches_reference(self):
