@@ -791,6 +791,30 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_st
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_merge2(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 48x64 1:2 fast path with two K groups per commit."""
+    if packed_weight.layout.block_n != 1 or packed_weight.layout.block_m != 2:
+        raise ValueError("merge2 requires block_n=1 and block_m=2")
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError(
+            "packed_weight does not contain lane-ready hardware metadata"
+        )
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_merge2",
+        metadata=metadata,
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
