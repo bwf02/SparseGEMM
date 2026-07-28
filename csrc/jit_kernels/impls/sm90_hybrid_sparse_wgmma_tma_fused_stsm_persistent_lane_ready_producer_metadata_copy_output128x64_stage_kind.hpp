@@ -15,7 +15,7 @@ public:
 #include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind.cuh>
 
 static void __instantiate_kernel() {
-    auto ptr = reinterpret_cast<void*>(&hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind<>);
+    auto ptr = reinterpret_cast<void*>(&hybrid_sparse_output128x64_stage_kind<>);
     (void)ptr;
 }
 )";

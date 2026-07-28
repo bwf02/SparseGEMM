@@ -26,7 +26,7 @@ KERNEL_128X64 = (
     "hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_"
     "producer_metadata_copy_output128x64"
 )
-KERNEL_STAGE_KIND = KERNEL_128X64 + "_stage_kind"
+KERNEL_STAGE_KIND = "hybrid_sparse_output128x64_stage_kind"
 
 
 def safe_ratio(numerator: float, denominator: float) -> float:
