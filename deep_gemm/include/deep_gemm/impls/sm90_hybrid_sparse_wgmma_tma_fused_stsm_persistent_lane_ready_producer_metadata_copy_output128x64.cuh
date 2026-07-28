@@ -13,6 +13,10 @@
 #define HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND 0
 #endif
 
+#ifndef HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE
+#define HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE 0
+#endif
+
 constexpr int kOutputTileMProducerMetadataCopy128x64 = 128;
 constexpr int kOutputTileNProducerMetadataCopy128x64 = 64;
 constexpr int kMathThreadsProducerMetadataCopy128x64 = 256;
@@ -92,6 +96,24 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
         empty_barrier + kPipelineStagesProducerMetadataCopy128x64);
     auto smem_output =
         reinterpret_cast<__nv_bfloat16*>(smem + kOutputOffset);
+
+#if HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE
+    auto dense_desc = deep_gemm::mma::sm90::make_smem_desc(
+        smem_weight(0), static_cast<int>(cute::GMMA::LayoutType::B128),
+        0, 1024);
+    auto sparse_desc = deep_gemm::mma::sm90::make_smem_desc(
+        smem_weight(0), static_cast<int>(cute::GMMA::LayoutType::B64),
+        0, 512);
+    auto activation_desc = deep_gemm::mma::sm90::make_smem_desc(
+        smem_activation(0),
+        static_cast<int>(cute::GMMA::LayoutType::B128), 0, 1024);
+    const unsigned dense_desc_base_lo =
+        __shfl_sync(0xffffffff, dense_desc.reg32_[0], 0);
+    const unsigned sparse_desc_base_lo =
+        __shfl_sync(0xffffffff, sparse_desc.reg32_[0], 0);
+    const unsigned activation_desc_base_lo =
+        __shfl_sync(0xffffffff, activation_desc.reg32_[0], 0);
+#endif
 
     if (warp == 8 && lane == 0) {
 #pragma unroll
@@ -243,6 +265,12 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                         deep_gemm::ptx::warpgroup_fence_operand(
                             accumulator[i]);
                     deep_gemm::ptx::warpgroup_arrive();
+#if HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE
+                    const unsigned stage_desc_offset =
+                        consumer_stage * (kStageBytes / 16);
+                    const unsigned activation_math_offset =
+                        math_wg * (kBlock * kBlock * sizeof(__nv_bfloat16) / 16);
+#endif
                     if (is_sparse) {
 #pragma unroll
                         for (int k_tile = 0; k_tile < 2; ++k_tile) {
@@ -255,6 +283,19 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                                     (k_tile * 4 + warp_in_math_wg) * 16 +
                                     active_lane];
                             }
+#if HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE
+                            sparse_desc.reg32_[0] =
+                                sparse_desc_base_lo + stage_desc_offset +
+                                k_tile * (16 * sizeof(__nv_bfloat16) / 16);
+                            activation_desc.reg32_[0] =
+                                activation_desc_base_lo + stage_desc_offset +
+                                activation_math_offset +
+                                k_tile * (32 * sizeof(__nv_bfloat16) / 16);
+                            sparse_wgmma(
+                                sparse_desc.desc_, activation_desc.desc_,
+                                accumulator, metadata,
+                                has_accumulator || k_tile != 0);
+#else
                             const auto desc_a =
                                 deep_gemm::mma::sm90::make_smem_desc(
                                     smem_weight(consumer_stage) +
@@ -274,10 +315,24 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                                 desc_a.desc_, desc_b.desc_, accumulator,
                                 metadata,
                                 has_accumulator || k_tile != 0);
+#endif
                         }
                     } else {
 #pragma unroll
                         for (int k_tile = 0; k_tile < 4; ++k_tile) {
+#if HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE
+                            dense_desc.reg32_[0] =
+                                dense_desc_base_lo + stage_desc_offset +
+                                k_tile * (16 * sizeof(__nv_bfloat16) / 16);
+                            activation_desc.reg32_[0] =
+                                activation_desc_base_lo + stage_desc_offset +
+                                activation_math_offset +
+                                k_tile * (16 * sizeof(__nv_bfloat16) / 16);
+                            DenseMMA::wgmma(
+                                dense_desc.desc_, activation_desc.desc_,
+                                accumulator,
+                                has_accumulator || k_tile != 0);
+#else
                             const auto desc_a =
                                 deep_gemm::mma::sm90::make_smem_desc(
                                     smem_weight(consumer_stage) +
@@ -296,6 +351,7 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                             DenseMMA::wgmma(
                                 desc_a.desc_, desc_b.desc_, accumulator,
                                 has_accumulator || k_tile != 0);
+#endif
                         }
                     }
                     deep_gemm::ptx::warpgroup_commit_batch();
@@ -348,3 +404,4 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
 
 #undef HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME
 #undef HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND
+#undef HYBRID_SPARSE_OUTPUT128X64_DESC_REUSE
