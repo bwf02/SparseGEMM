@@ -18,6 +18,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_merge_k2,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64,
@@ -554,6 +555,14 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                     rtol=1e-2,
                     atol=1e-2,
                 )
+                group_stage_80_nm12 = (
+                    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath(
+                        activation, packed
+                    )
+                )
+                torch.testing.assert_close(
+                    group_stage_80_nm12, expected, rtol=1e-2, atol=1e-2
+                )
 
     def test_lane_ready_reg_realloc_matches_reference(self):
         torch.manual_seed(113)
@@ -757,6 +766,14 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             expected,
             rtol=1e-2,
             atol=1e-2,
+        )
+        group_stage_80_nm12 = (
+            hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath(
+                activation, packed
+            )
+        )
+        torch.testing.assert_close(
+            group_stage_80_nm12, expected, rtol=1e-2, atol=1e-2
         )
 
     def test_rejects_non_64_block_layout(self):

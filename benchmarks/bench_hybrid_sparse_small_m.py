@@ -21,6 +21,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
 )
 
 from bench_hybrid_sparse import Shape, make_hybrid_mask, qwen_moe_shapes
@@ -35,6 +36,7 @@ GROUP_STAGE_KERNEL = "hybrid_sparse_group_stage_output64x64"
 GROUP_STAGE_48_KERNEL = "hybrid_sparse_group_stage_output48x64"
 GROUP_STAGE_48_NM12_KERNEL = "hybrid_sparse_group_stage_output48x64_nm12_fastpath"
 GROUP_STAGE_48_NM12_TMA_METADATA_KERNEL = "hybrid_sparse_group_stage_output48x64_nm12_fastpath_tma_metadata"
+GROUP_STAGE_80_NM12_KERNEL = "hybrid_sparse_group_stage_output80x64_nm12_fastpath"
 CURRENT_KERNEL = "hybrid_sparse_output128x64_stage_kind"
 
 
@@ -71,6 +73,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     group_stage_48_output = torch.empty_like(small_output)
     group_stage_48_nm12_output = torch.empty_like(small_output)
     group_stage_48_nm12_tma_metadata_output = torch.empty_like(small_output)
+    group_stage_80_nm12_output = torch.empty_like(small_output)
     deepgemm_output = torch.empty_like(small_output)
 
     small_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind(
@@ -100,6 +103,9 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     group_stage_48_nm12_tma_metadata_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata(
         activation, packed, out=group_stage_48_nm12_tma_metadata_output
     )
+    group_stage_80_nm12_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath(
+        activation, packed, out=group_stage_80_nm12_output
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_output
     )
@@ -112,6 +118,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     group_stage_48_call()
     group_stage_48_nm12_call()
     group_stage_48_nm12_tma_metadata_call()
+    group_stage_80_nm12_call()
     current_call()
     deepgemm_call()
     torch.cuda.synchronize()
@@ -145,6 +152,9 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         rtol=2e-2,
         atol=2e-2,
     )
+    torch.testing.assert_close(
+        group_stage_80_nm12_output, deepgemm_output, rtol=2e-2, atol=2e-2
+    )
 
     timings = {
         "small": [],
@@ -155,6 +165,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         "group_stage_48": [],
         "group_stage_48_nm12": [],
         "group_stage_48_nm12_tma_metadata": [],
+        "group_stage_80_nm12": [],
         "current": [],
         "deepgemm": [],
     }
@@ -167,6 +178,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         ("group_stage_48", group_stage_48_call, GROUP_STAGE_48_KERNEL),
         ("group_stage_48_nm12", group_stage_48_nm12_call, GROUP_STAGE_48_NM12_KERNEL),
         ("group_stage_48_nm12_tma_metadata", group_stage_48_nm12_tma_metadata_call, GROUP_STAGE_48_NM12_TMA_METADATA_KERNEL),
+        ("group_stage_80_nm12", group_stage_80_nm12_call, GROUP_STAGE_80_NM12_KERNEL),
         ("current", current_call, CURRENT_KERNEL),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
@@ -176,9 +188,9 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
             timings[name].append(measure(function, kernel_name, num_tests))
 
     speedups = [
-        deepgemm / group_stage_48_nm12_tma_metadata_us
-        for group_stage_48_nm12_tma_metadata_us, deepgemm in zip(
-            timings["group_stage_48_nm12_tma_metadata"], timings["deepgemm"]
+        deepgemm / group_stage_80_nm12_us
+        for group_stage_80_nm12_us, deepgemm in zip(
+            timings["group_stage_80_nm12"], timings["deepgemm"]
         )
     ]
     return {
@@ -193,6 +205,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         "group_stage_48_us": timings["group_stage_48"],
         "group_stage_48_nm12_us": timings["group_stage_48_nm12"],
         "group_stage_48_nm12_tma_metadata_us": timings["group_stage_48_nm12_tma_metadata"],
+        "group_stage_80_nm12_us": timings["group_stage_80_nm12"],
         "current_us": timings["current"],
         "deepgemm_us": timings["deepgemm"],
         "small_median_us": statistics.median(timings["small"]),
@@ -210,6 +223,9 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         ),
         "group_stage_48_nm12_tma_metadata_median_us": statistics.median(
             timings["group_stage_48_nm12_tma_metadata"]
+        ),
+        "group_stage_80_nm12_median_us": statistics.median(
+            timings["group_stage_80_nm12"]
         ),
         "current_median_us": statistics.median(timings["current"]),
         "deepgemm_median_us": statistics.median(timings["deepgemm"]),
@@ -231,7 +247,7 @@ def main() -> None:
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(
         "     M      N      K | small32 median (us) merged median (us) wide64 median (us) async3 median (us) group-stage median (us) current median (us) "
-        "group-stage48 median (us) nm12-fast median (us) tma-meta median (us) deepgemm median (us) speedup | per-run speedups"
+        "group-stage48 median (us) nm12-fast median (us) tma-meta median (us) group80 median (us) deepgemm median (us) speedup | per-run speedups"
     )
     results = []
     for shape in qwen_moe_shapes(args.m):
@@ -249,6 +265,7 @@ def main() -> None:
             f"{result['group_stage_48_median_us']:25.2f} "
             f"{result['group_stage_48_nm12_median_us']:22.2f} "
             f"{result['group_stage_48_nm12_tma_metadata_median_us']:20.2f} "
+            f"{result['group_stage_80_nm12_median_us']:19.2f} "
             f"{result['deepgemm_median_us']:20.2f} "
             f"{result['speedup_median']:7.3f}x | {run_text}",
             flush=True,

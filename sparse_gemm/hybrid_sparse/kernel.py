@@ -791,6 +791,28 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_st
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run the 80x64 group-stage kernel with a compiled 1:2 fast path."""
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError(
+            "packed_weight does not contain lane-ready hardware metadata"
+        )
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath",
+        metadata=metadata,
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_selector(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
