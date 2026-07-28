@@ -44,6 +44,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_block128x32_output128x128,
     hybrid_block_sparse_gemm_wgmma_tma_block128x64,
     hybrid_block_sparse_gemm_wgmma_tma_block128x128,
+    hybrid_block_sparse_gemm_wgmma_tuned,
     hybrid_block_sparse_gemm_ref,
     hybrid_block_sparse_grouped_contiguous_naive,
     hybrid_block_sparse_grouped_contiguous_ref,
@@ -808,6 +809,12 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         )
         torch.testing.assert_close(
             group_stage_64_nm12, expected, rtol=1e-2, atol=1e-2
+        )
+        tuned_fallback = hybrid_block_sparse_gemm_wgmma_tuned(
+            activation, packed
+        )
+        torch.testing.assert_close(
+            tuned_fallback, expected, rtol=1e-2, atol=1e-2
         )
 
     def test_rejects_non_64_block_layout(self):

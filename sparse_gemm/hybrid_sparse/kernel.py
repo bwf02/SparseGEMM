@@ -857,6 +857,38 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_st
     )
 
 
+def _select_hybrid_block_sparse_gemm_wgmma_tuned(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+):
+    layout = packed_weight.layout
+    shape = (a.shape[0], *packed_weight.original_shape)
+    if (layout.block_n, layout.block_m) == (1, 2):
+        tuned = {
+            (128, 1408, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath,
+            (256, 1408, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath,
+            (512, 1408, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
+            (1024, 1408, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output80x64_nm12_fastpath,
+            (128, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64,
+            (256, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
+            (512, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
+            (1024, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath,
+        }
+        if shape in tuned:
+            return tuned[shape]
+    return hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64
+
+
+def hybrid_block_sparse_gemm_wgmma_tuned(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Dispatch verified Qwen MoE shapes and fall back to generic group staging."""
+    kernel = _select_hybrid_block_sparse_gemm_wgmma_tuned(a, packed_weight)
+    return kernel(a, packed_weight, out=out)
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_selector(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
