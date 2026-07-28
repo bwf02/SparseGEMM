@@ -26,7 +26,7 @@ TUNED_KERNEL_NAMES = {
     (1024, 1408, 2048): "hybrid_sparse_group_stage_output80x64_nm12_fastpath",
     (128, 2048, 1408): "hybrid_sparse_group_stage_output64x64",
     (256, 2048, 1408): "hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse",
-    (512, 2048, 1408): "hybrid_sparse_output128x64_stage_kind",
+    (512, 2048, 1408): "hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse",
     (1024, 2048, 1408): "hybrid_sparse_group_stage_output96x64_nm12_fastpath",
 }
 
