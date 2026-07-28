@@ -124,7 +124,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         (
             "async_group3",
             async_group3_call,
-            "hybrid_sparse_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_async_group3",
+            "hybrid_sparse_group_stage_output64x64",
         ),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
