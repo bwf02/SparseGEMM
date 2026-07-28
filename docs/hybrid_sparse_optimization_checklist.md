@@ -39,3 +39,4 @@
 - [x] **producer 广播 stage block kind**，consumer 不再重复读取 global block selector；NCU global-load 从 `112,640` 降至 `22,528`，总指令从 `19.76 M` 降至 `18.42 M`，为当前最佳版本。
 - [x] **按 block group 广播完整 selector**，shared control load 数量下降，但稳定计时略慢于 stage-kind，因此保留实现但不采用。
 - [x] **验证 `1.25x` 目标**，在 `4096 x 2048 x 1408` 上三轮各 100 次配对计时中，stage-kind 相对 DeepGEMM 为 `1.261x`、`1.259x`、`1.262x`。
+- [x] **验证全部标准 shape**，12 个 shape 均完成重复配对测试，其中 8 个快于 DeepGEMM、2 个达到至少 `1.25x`；`M=512/1024` 加测至 7 轮。
