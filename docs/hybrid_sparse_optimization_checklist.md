@@ -10,7 +10,7 @@
 
 - [ ] **P0：联合 K-block merge 与更深 pipeline**，仅在增加 TMA stage 后重新评估 `merge_k=2`，避免两级 buffer 成对释放阻断预取。
 - [ ] **P1：CTA tile swizzle**，调整 tile 调度顺序以提高 activation 或 weight 的 L2 复用率。
-- [ ] **P1：shape-aware dispatch**，保持 `64 x 64` 为默认路径，仅继续评估 fused、lane-ready 的 `128 x 128` 等候选版本。
+- [ ] **P1：shape-aware dispatch**，小 M 保持 `64 x 64` output tile，大 M 选择当前更快的 `128 x 64` output tile。
 - [ ] **P1：grouped GEMM persistent scheduler**，让固定数量的 CTA 持续领取不均匀 expert tile。
 - [ ] **P3：TMA multicast/CTA cluster**，仅在 operand 复用和并行 wave 足够时评估 cluster 共享收益。
 
@@ -34,4 +34,8 @@
 - [x] **persistent epilogue overlap**，CTA barrier stall 从 `16.05` 降至 `7.03 cycles/inst`，但延迟仅改善约 `0.3%`，作为后续 metadata 优化基础保留。
 - [x] **metadata register prefetch**，long-scoreboard 小幅下降，但指令数增加约 `5.5%` 且 NCU 延迟回退，因此不采用。
 - [x] **stage-local metadata TMA**，降低 math warp 的 global-load stall，但每个 sparse block 增加一次 TMA transaction，普通 benchmark 改善而 NCU cache-control 结果回退。
-- [x] **producer-warp metadata copy**，用连续 `512 B` vector copy 替代额外 metadata TMA；NCU 延迟从 `62.05 us` 降至 `59.87 us`，为当前最佳 metadata 路径。
+- [x] **producer-warp metadata copy**，用连续 `512 B` vector copy 替代额外 metadata TMA；NCU 延迟从 `62.05 us` 降至 `59.87 us`，作为后续 output tile 优化的 metadata 基线。
+- [x] **`128 x 64` output tile 与双 math warpgroup**，两个 warpgroup 共享同一 `64 x 64` weight tile 和 metadata；在大 M 上减少 CTA、TMA load 和控制指令。
+- [x] **producer 广播 stage block kind**，consumer 不再重复读取 global block selector；NCU global-load 从 `112,640` 降至 `22,528`，总指令从 `19.76 M` 降至 `18.42 M`，为当前最佳版本。
+- [x] **按 block group 广播完整 selector**，shared control load 数量下降，但稳定计时略慢于 stage-kind，因此保留实现但不采用。
+- [x] **验证 `1.25x` 目标**，在 `4096 x 2048 x 1408` 上三轮各 100 次配对计时中，stage-kind 相对 DeepGEMM 为 `1.261x`、`1.259x`、`1.262x`。
