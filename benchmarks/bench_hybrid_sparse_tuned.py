@@ -21,7 +21,7 @@ from bench_hybrid_sparse import Shape, make_hybrid_mask, qwen_moe_shapes
 STANDARD_M = (128, 256, 512, 1024)
 TUNED_KERNEL_NAMES = {
     (128, 1408, 2048): "hybrid_sparse_group_stage_output48x64_nm12_fastpath",
-    (256, 1408, 2048): "hybrid_sparse_group_stage_output96x64_nm12_fastpath_desc_reuse",
+    (256, 1408, 2048): "hybrid_sparse_group_stage_output88x64_nm12_fastpath_desc_reuse",
     (512, 1408, 2048): "hybrid_sparse_group_stage_output80x64_nm12_fastpath",
     (1024, 1408, 2048): "hybrid_sparse_group_stage_output80x64_nm12_fastpath",
     (128, 2048, 1408): "hybrid_sparse_group_stage_output64x64",
