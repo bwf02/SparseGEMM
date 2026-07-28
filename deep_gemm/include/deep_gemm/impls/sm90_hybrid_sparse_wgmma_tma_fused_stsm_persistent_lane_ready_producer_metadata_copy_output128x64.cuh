@@ -88,6 +88,8 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
         smem + kPipelineStagesProducerMetadataCopy128x64 * kStageBytes);
     auto empty_barrier =
         full_barrier + kPipelineStagesProducerMetadataCopy128x64;
+    auto stage_kind = reinterpret_cast<volatile int*>(
+        empty_barrier + kPipelineStagesProducerMetadataCopy128x64);
     auto smem_output =
         reinterpret_cast<__nv_bfloat16*>(smem + kOutputOffset);
 
@@ -142,8 +144,7 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                         (selector >> local_block) & 1ULL;
                     if constexpr (HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND) {
                         if (is_leader) {
-                            reinterpret_cast<int*>(
-                                smem_output)[producer_stage] =
+                            stage_kind[producer_stage] =
                                 static_cast<int>(is_sparse);
                         }
                         __syncwarp();
@@ -224,9 +225,7 @@ void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
                     full_barrier[consumer_stage].wait(consumer_phase);
                     const bool is_sparse =
                         HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND
-                        ? static_cast<bool>(
-                            reinterpret_cast<volatile int*>(
-                                smem_output)[consumer_stage])
+                        ? static_cast<bool>(stage_kind[consumer_stage])
                         : static_cast<bool>(
                             (selector >> local_block) & 1ULL);
 #pragma unroll
