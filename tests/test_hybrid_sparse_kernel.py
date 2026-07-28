@@ -19,6 +19,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_selector,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_reg_realloc,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_stage3,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_direct_metadata_epilogue_overlap,
@@ -460,6 +461,28 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 expected = hybrid_block_sparse_gemm_ref(activation, packed)
                 actual = (
                     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_selector(
+                        activation, packed
+                    )
+                )
+                torch.testing.assert_close(
+                    actual, expected, rtol=1e-2, atol=1e-2
+                )
+
+    def test_lane_ready_output32x64_stage_kind_matches_reference(self):
+        torch.manual_seed(122)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(128, 256, device="cuda", dtype=torch.bfloat16)
+        mask = make_mask(weight, layout, (1,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+
+        for m in (1, 31, 32, 33, 63, 64, 65, 128, 1024):
+            with self.subTest(m=m):
+                activation = torch.randn(
+                    m, 256, device="cuda", dtype=torch.bfloat16
+                )
+                expected = hybrid_block_sparse_gemm_ref(activation, packed)
+                actual = (
+                    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind(
                         activation, packed
                     )
                 )
