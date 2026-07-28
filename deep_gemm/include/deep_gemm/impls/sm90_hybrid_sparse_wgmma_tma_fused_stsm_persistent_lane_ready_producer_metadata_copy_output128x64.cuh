@@ -4,6 +4,15 @@
 
 #include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm.cuh>
 
+#ifndef HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME
+#define HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME \
+    hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_producer_metadata_copy_output128x64
+#endif
+
+#ifndef HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND
+#define HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND 0
+#endif
+
 constexpr int kOutputTileMProducerMetadataCopy128x64 = 128;
 constexpr int kOutputTileNProducerMetadataCopy128x64 = 64;
 constexpr int kMathThreadsProducerMetadataCopy128x64 = 256;
@@ -20,7 +29,7 @@ __device__ __forceinline__ void advance_pipeline_producer_metadata_copy_128x64(
 
 template <int = 0>
 __global__ __launch_bounds__(kThreadsProducerMetadataCopy128x64, 1)
-void hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_producer_metadata_copy_output128x64(
+void HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME(
         const long long* block_selector, const unsigned* hardware_metadata,
         __nv_bfloat16*,
         const __grid_constant__ cute::TmaDescriptor tensor_map_activation,
@@ -131,6 +140,14 @@ void hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_producer_metadata_
                     __syncwarp();
                     const bool is_sparse =
                         (selector >> local_block) & 1ULL;
+                    if constexpr (HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND) {
+                        if (is_leader) {
+                            reinterpret_cast<int*>(
+                                smem_output)[producer_stage] =
+                                static_cast<int>(is_sparse);
+                        }
+                        __syncwarp();
+                    }
                     const int block_k =
                         (block_group * block_m + local_block) * kBlock;
                     int weight_bytes;
@@ -196,15 +213,22 @@ void hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_producer_metadata_
             bool has_accumulator = false;
             for (int block_group = 0; block_group < block_groups;
                  ++block_group) {
-                const unsigned long long selector =
-                    static_cast<unsigned long long>(
+                unsigned long long selector = 0;
+                if constexpr (!HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND) {
+                    selector = static_cast<unsigned long long>(
                         block_selector[
                             block_row * block_groups + block_group]);
+                }
                 for (int local_block = 0; local_block < block_m;
                      ++local_block) {
-                    const bool is_sparse =
-                        (selector >> local_block) & 1ULL;
                     full_barrier[consumer_stage].wait(consumer_phase);
+                    const bool is_sparse =
+                        HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND
+                        ? static_cast<bool>(
+                            reinterpret_cast<volatile int*>(
+                                smem_output)[consumer_stage])
+                        : static_cast<bool>(
+                            (selector >> local_block) & 1ULL);
 #pragma unroll
                     for (int i = 0; i < 32; ++i)
                         deep_gemm::ptx::warpgroup_fence_operand(
@@ -312,3 +336,6 @@ void hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_producer_metadata_
         }
     }
 }
+
+#undef HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME
+#undef HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND

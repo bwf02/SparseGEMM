@@ -1,0 +1,8 @@
+#pragma once
+
+// Broadcast each stage's dense/sparse kind through shared memory.
+
+#define HYBRID_SPARSE_OUTPUT128X64_KERNEL_NAME \
+    hybrid_sparse_fused_wgmma_tma_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind
+#define HYBRID_SPARSE_OUTPUT128X64_STAGE_KIND 1
+#include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64.cuh>
