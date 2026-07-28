@@ -16,6 +16,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_direct_metadata,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_compact,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath,
@@ -547,6 +548,17 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
                 torch.testing.assert_close(
                     group_stage_48_nm12, expected, rtol=1e-2, atol=1e-2
                 )
+                group_stage_48_nm12_compact = (
+                    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_compact(
+                        activation, packed
+                    )
+                )
+                torch.testing.assert_close(
+                    group_stage_48_nm12_compact,
+                    expected,
+                    rtol=1e-2,
+                    atol=1e-2,
+                )
                 group_stage_48_nm12_tma_metadata = (
                     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata(
                         activation, packed
@@ -774,6 +786,17 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         )
         torch.testing.assert_close(
             group_stage_48_nm12, expected, rtol=1e-2, atol=1e-2
+        )
+        group_stage_48_nm12_compact = (
+            hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_compact(
+                activation, packed
+            )
+        )
+        torch.testing.assert_close(
+            group_stage_48_nm12_compact,
+            expected,
+            rtol=1e-2,
+            atol=1e-2,
         )
         group_stage_48_nm12_tma_metadata = (
             hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output48x64_nm12_fastpath_tma_metadata(
