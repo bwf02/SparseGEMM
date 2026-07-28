@@ -19,6 +19,16 @@ from bench_hybrid_sparse import Shape, make_hybrid_mask, qwen_moe_shapes
 
 
 STANDARD_M = (128, 256, 512, 1024)
+TUNED_KERNEL_NAMES = {
+    (128, 1408, 2048): "hybrid_sparse_group_stage_output48x64_nm12_fastpath",
+    (256, 1408, 2048): "hybrid_sparse_group_stage_output96x64_nm12_fastpath",
+    (512, 1408, 2048): "hybrid_sparse_group_stage_output80x64_nm12_fastpath",
+    (1024, 1408, 2048): "hybrid_sparse_group_stage_output80x64_nm12_fastpath",
+    (128, 2048, 1408): "hybrid_sparse_group_stage_output64x64",
+    (256, 2048, 1408): "hybrid_sparse_output128x64_stage_kind",
+    (512, 2048, 1408): "hybrid_sparse_output128x64_stage_kind",
+    (1024, 2048, 1408): "hybrid_sparse_group_stage_output96x64_nm12_fastpath",
+}
 
 
 def measure(function, kernel_name: str, num_tests: int) -> float:
@@ -63,9 +73,10 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
 
     tuned_us = []
     deepgemm_us = []
+    tuned_kernel_name = TUNED_KERNEL_NAMES[(shape.m, shape.n, shape.k)]
     for repeat in range(repeats):
         measurements = (
-            (tuned_call, "hybrid_sparse_", tuned_us),
+            (tuned_call, tuned_kernel_name, tuned_us),
             (deepgemm_call, "bf16_gemm", deepgemm_us),
         )
         if repeat % 2:
