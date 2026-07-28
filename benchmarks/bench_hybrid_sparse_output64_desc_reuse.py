@@ -15,6 +15,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape,
 )
 
 from bench_hybrid_sparse import Shape, make_hybrid_mask
@@ -49,6 +50,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     )
     fast_out = torch.empty_like(generic_out)
     reuse_out = torch.empty_like(generic_out)
+    fixed_shape_out = torch.empty_like(generic_out)
     deepgemm_out = torch.empty_like(generic_out)
     generic_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64(
         activation, packed, out=generic_out
@@ -59,14 +61,23 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     reuse_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse(
         activation, packed, out=reuse_out
     )
+    fixed_shape_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape(
+        activation, packed, out=fixed_shape_out
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_out
     )
 
-    for function in (generic_call, fast_call, reuse_call, deepgemm_call):
+    for function in (
+        generic_call,
+        fast_call,
+        reuse_call,
+        fixed_shape_call,
+        deepgemm_call,
+    ):
         function()
     torch.cuda.synchronize()
-    for actual in (generic_out, fast_out, reuse_out):
+    for actual in (generic_out, fast_out, reuse_out, fixed_shape_out):
         torch.testing.assert_close(actual, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     measurements = (
@@ -80,6 +91,11 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
             "desc_reuse",
             reuse_call,
             "hybrid_sparse_group_stage_output64x64_nm12_fastpath_desc_reuse",
+        ),
+        (
+            "fixed_shape",
+            fixed_shape_call,
+            "hybrid_sparse_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape",
         ),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
@@ -99,6 +115,8 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         "reuse_over_generic": medians["generic"] / medians["desc_reuse"],
         "reuse_over_fastpath": medians["fastpath"] / medians["desc_reuse"],
         "speedup_over_deepgemm": medians["deepgemm"] / medians["desc_reuse"],
+        "fixed_shape_over_reuse": medians["desc_reuse"] / medians["fixed_shape"],
+        "fixed_shape_speedup_over_deepgemm": medians["deepgemm"] / medians["fixed_shape"],
     }
 
 
@@ -113,7 +131,10 @@ def main() -> None:
     k = 2048 if args.n == 1408 else 1408
 
     print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print("     M      N      K | generic fastpath reuse DeepGEMM reuse/generic DG/reuse")
+    print(
+        "     M      N      K | generic fastpath reuse fixed DeepGEMM "
+        "fixed/reuse DG/fixed"
+    )
     results = []
     for m in args.m:
         shape = Shape(m, args.n, k)
@@ -123,9 +144,10 @@ def main() -> None:
         print(
             f"{m:6d} {args.n:6d} {k:6d} | "
             f"{medians['generic']:7.2f} {medians['fastpath']:8.2f} "
-            f"{medians['desc_reuse']:5.2f} {medians['deepgemm']:8.2f} "
-            f"{result['reuse_over_generic']:13.3f}x "
-            f"{result['speedup_over_deepgemm']:8.3f}x",
+            f"{medians['desc_reuse']:5.2f} {medians['fixed_shape']:5.2f} "
+            f"{medians['deepgemm']:8.2f} "
+            f"{result['fixed_shape_over_reuse']:11.3f}x "
+            f"{result['fixed_shape_speedup_over_deepgemm']:8.3f}x",
             flush=True,
         )
 
