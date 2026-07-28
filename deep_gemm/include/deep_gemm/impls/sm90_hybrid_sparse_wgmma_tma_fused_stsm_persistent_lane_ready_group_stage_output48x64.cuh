@@ -2,6 +2,9 @@
 
 // Stage one complete outer N:M group and commit it as one WGMMA group.
 
+#ifndef CUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED
+#define CUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED
+#endif
 #include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm.cuh>
 
 constexpr int kOutputTileMProducerMetadataGroupStage48x64 = 48;
