@@ -15,6 +15,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind_merge_k3_stage6,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output64x64_stage_kind,
 )
 
 from bench_hybrid_sparse import Shape, make_hybrid_mask, qwen_moe_shapes
@@ -23,6 +24,7 @@ from bench_hybrid_sparse import Shape, make_hybrid_mask, qwen_moe_shapes
 STANDARD_M = (128, 256, 512, 1024)
 SMALL_M_KERNEL = "hybrid_sparse_output32x64_stage_kind"
 MERGED_KERNEL = "hybrid_sparse_output32x64_stage_kind_merge_k3_stage6"
+WIDE_KERNEL = "hybrid_sparse_output64x64_stage_kind"
 CURRENT_KERNEL = "hybrid_sparse_output128x64_stage_kind"
 
 
@@ -53,6 +55,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     )
     current_output = torch.empty_like(small_output)
     merged_output = torch.empty_like(small_output)
+    wide_output = torch.empty_like(small_output)
     deepgemm_output = torch.empty_like(small_output)
 
     small_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind(
@@ -64,12 +67,16 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     merged_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output32x64_stage_kind_merge_k3_stage6(
         activation, packed, out=merged_output
     )
+    wide_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output64x64_stage_kind(
+        activation, packed, out=wide_output
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_output
     )
 
     small_call()
     merged_call()
+    wide_call()
     current_call()
     deepgemm_call()
     torch.cuda.synchronize()
@@ -82,11 +89,21 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     torch.testing.assert_close(
         merged_output, deepgemm_output, rtol=2e-2, atol=2e-2
     )
+    torch.testing.assert_close(
+        wide_output, deepgemm_output, rtol=2e-2, atol=2e-2
+    )
 
-    timings = {"small": [], "merged": [], "current": [], "deepgemm": []}
+    timings = {
+        "small": [],
+        "merged": [],
+        "wide": [],
+        "current": [],
+        "deepgemm": [],
+    }
     measurements = (
         ("small", small_call, SMALL_M_KERNEL),
         ("merged", merged_call, MERGED_KERNEL),
+        ("wide", wide_call, WIDE_KERNEL),
         ("current", current_call, CURRENT_KERNEL),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
@@ -96,8 +113,8 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
             timings[name].append(measure(function, kernel_name, num_tests))
 
     speedups = [
-        deepgemm / merged
-        for merged, deepgemm in zip(timings["merged"], timings["deepgemm"])
+        deepgemm / wide
+        for wide, deepgemm in zip(timings["wide"], timings["deepgemm"])
     ]
     return {
         "m": shape.m,
@@ -105,10 +122,12 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         "k": shape.k,
         "small_us": timings["small"],
         "merged_us": timings["merged"],
+        "wide_us": timings["wide"],
         "current_us": timings["current"],
         "deepgemm_us": timings["deepgemm"],
         "small_median_us": statistics.median(timings["small"]),
         "merged_median_us": statistics.median(timings["merged"]),
+        "wide_median_us": statistics.median(timings["wide"]),
         "current_median_us": statistics.median(timings["current"]),
         "deepgemm_median_us": statistics.median(timings["deepgemm"]),
         "speedup": speedups,
@@ -128,7 +147,7 @@ def main() -> None:
 
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(
-        "     M      N      K | small32 median (us) merged median (us) current median (us) "
+        "     M      N      K | small32 median (us) merged median (us) wide64 median (us) current median (us) "
         "deepgemm median (us) speedup | per-run speedups"
     )
     results = []
@@ -140,6 +159,7 @@ def main() -> None:
             f"{shape.m:6d} {shape.n:6d} {shape.k:6d} | "
             f"{result['small_median_us']:19.2f} "
             f"{result['merged_median_us']:18.2f} "
+            f"{result['wide_median_us']:18.2f} "
             f"{result['current_median_us']:19.2f} "
             f"{result['deepgemm_median_us']:20.2f} "
             f"{result['speedup_median']:7.3f}x | {run_text}",
