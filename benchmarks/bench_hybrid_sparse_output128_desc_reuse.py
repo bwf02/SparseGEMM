@@ -15,6 +15,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse,
 )
 
 from bench_hybrid_sparse import make_hybrid_mask
@@ -43,6 +44,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     baseline_out = torch.empty(m, n, device="cuda", dtype=torch.bfloat16)
     reuse_out = torch.empty_like(baseline_out)
     compact_out = torch.empty_like(baseline_out)
+    group_stage_out = torch.empty_like(baseline_out)
     deepgemm_out = torch.empty_like(baseline_out)
     baseline_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind(
         activation, packed, out=baseline_out
@@ -53,16 +55,26 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     compact_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact(
         activation, packed, out=compact_out
     )
+    group_stage_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse(
+        activation, packed, out=group_stage_out
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_out
     )
 
-    for function in (baseline_call, reuse_call, compact_call, deepgemm_call):
+    for function in (
+        baseline_call,
+        reuse_call,
+        compact_call,
+        group_stage_call,
+        deepgemm_call,
+    ):
         function()
     torch.cuda.synchronize()
     torch.testing.assert_close(baseline_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(reuse_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(compact_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(group_stage_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     measurements = (
         ("baseline", baseline_call, "hybrid_sparse_output128x64_stage_kind"),
@@ -75,6 +87,11 @@ def benchmark(repeats: int, num_tests: int) -> dict:
             "compact",
             compact_call,
             "hybrid_sparse_output128x64_stage_kind_desc_reuse_compact",
+        ),
+        (
+            "group_stage",
+            group_stage_call,
+            "hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse",
         ),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
@@ -92,7 +109,8 @@ def benchmark(repeats: int, num_tests: int) -> dict:
         "medians_us": medians,
         "reuse_over_baseline": medians["baseline"] / medians["desc_reuse"],
         "compact_over_reuse": medians["desc_reuse"] / medians["compact"],
-        "speedup_over_deepgemm": medians["deepgemm"] / medians["compact"],
+        "group_stage_over_reuse": medians["desc_reuse"] / medians["group_stage"],
+        "speedup_over_deepgemm": medians["deepgemm"] / medians["group_stage"],
     }
 
 
@@ -105,12 +123,12 @@ def main() -> None:
     result = benchmark(args.repeats, args.num_tests)
     medians = result["medians_us"]
     print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print("     M      N      K | baseline reuse compact DeepGEMM compact/reuse DG/compact")
+    print("     M      N      K | baseline reuse compact group DeepGEMM group/reuse DG/group")
     print(
         f"{result['m']:6d} {result['n']:6d} {result['k']:6d} | "
         f"{medians['baseline']:8.2f} {medians['desc_reuse']:5.2f} "
-        f"{medians['compact']:7.2f} {medians['deepgemm']:8.2f} "
-        f"{result['compact_over_reuse']:13.3f}x "
+        f"{medians['compact']:7.2f} {medians['group_stage']:5.2f} "
+        f"{medians['deepgemm']:8.2f} {result['group_stage_over_reuse']:11.3f}x "
         f"{result['speedup_over_deepgemm']:8.3f}x"
     )
     if args.json_output is not None:
