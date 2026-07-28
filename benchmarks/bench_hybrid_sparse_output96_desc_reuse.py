@@ -14,6 +14,7 @@ from sparse_gemm.hybrid_sparse import (
     dense_to_hybrid_block_sparse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath_desc_reuse,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output88x64_nm12_fastpath_desc_reuse,
 )
 
 from bench_hybrid_sparse import make_hybrid_mask
@@ -41,6 +42,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     dense_weight = packed.to_dense().contiguous()
     baseline_out = torch.empty(m, n, device="cuda", dtype=torch.bfloat16)
     reuse_out = torch.empty_like(baseline_out)
+    output88_out = torch.empty_like(baseline_out)
     deepgemm_out = torch.empty_like(baseline_out)
     baseline_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath(
         activation, packed, out=baseline_out
@@ -48,15 +50,19 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     reuse_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath_desc_reuse(
         activation, packed, out=reuse_out
     )
+    output88_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output88x64_nm12_fastpath_desc_reuse(
+        activation, packed, out=output88_out
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_out
     )
 
-    for function in (baseline_call, reuse_call, deepgemm_call):
+    for function in (baseline_call, reuse_call, output88_call, deepgemm_call):
         function()
     torch.cuda.synchronize()
     torch.testing.assert_close(baseline_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(reuse_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(output88_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     measurements = (
         (
@@ -68,6 +74,11 @@ def benchmark(repeats: int, num_tests: int) -> dict:
             "desc_reuse",
             reuse_call,
             "hybrid_sparse_group_stage_output96x64_nm12_fastpath_desc_reuse",
+        ),
+        (
+            "output88",
+            output88_call,
+            "hybrid_sparse_group_stage_output88x64_nm12_fastpath_desc_reuse",
         ),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
@@ -84,7 +95,8 @@ def benchmark(repeats: int, num_tests: int) -> dict:
         "timings_us": timings,
         "medians_us": medians,
         "reuse_over_baseline": medians["baseline"] / medians["desc_reuse"],
-        "speedup_over_deepgemm": medians["deepgemm"] / medians["desc_reuse"],
+        "output88_over_output96": medians["desc_reuse"] / medians["output88"],
+        "speedup_over_deepgemm": medians["deepgemm"] / medians["output88"],
     }
 
 
@@ -97,11 +109,12 @@ def main() -> None:
     result = benchmark(args.repeats, args.num_tests)
     medians = result["medians_us"]
     print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print("     M      N      K | baseline reuse DeepGEMM reuse/base DG/reuse")
+    print("     M      N      K | baseline output96 output88 DeepGEMM 88/96 DG/88")
     print(
         f"{result['m']:6d} {result['n']:6d} {result['k']:6d} | "
-        f"{medians['baseline']:8.2f} {medians['desc_reuse']:5.2f} "
-        f"{medians['deepgemm']:8.2f} {result['reuse_over_baseline']:10.3f}x "
+        f"{medians['baseline']:8.2f} {medians['desc_reuse']:8.2f} "
+        f"{medians['output88']:8.2f} {medians['deepgemm']:8.2f} "
+        f"{result['output88_over_output96']:5.3f}x "
         f"{result['speedup_over_deepgemm']:8.3f}x"
     )
     if args.json_output is not None:
