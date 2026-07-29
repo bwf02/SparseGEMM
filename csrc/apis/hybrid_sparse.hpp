@@ -3651,7 +3651,7 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and m_alignment == 128 and
         total_m == 1024 and n % 128 == 0) {
-        sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg_async_k2(
+        sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, grouped_layout, d, total_m, num_experts,
             m_alignment, n, k, block_n, block_m);
