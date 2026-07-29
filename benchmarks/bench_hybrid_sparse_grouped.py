@@ -17,7 +17,7 @@ from sparse_gemm.hybrid_sparse import (
 from bench_hybrid_sparse import make_hybrid_mask
 
 
-GROUPED_FUSED_KERNEL = "hybrid_sparse_grouped_fused_output64x64"
+GROUPED_FUSED_KERNEL = "hybrid_sparse_grouped"
 
 
 def make_packed_weight(
