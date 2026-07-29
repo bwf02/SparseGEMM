@@ -18,7 +18,8 @@ from sparse_gemm.hybrid_sparse import (
 from bench_hybrid_sparse import Shape, make_hybrid_mask, qwen_moe_shapes
 
 
-STANDARD_M = (128, 256, 512, 1024)
+STANDARD_M = (128, 256, 512, 1024, 2048, 4096)
+FALLBACK_KERNEL_NAME = "hybrid_sparse_group_stage_output64x64"
 TUNED_KERNEL_NAMES = {
     (128, 1408, 2048): "hybrid_sparse_group_stage_output48x64_nm12_fastpath",
     (256, 1408, 2048): "hybrid_sparse_group_stage_output88x64_nm12_fastpath_desc_reuse",
@@ -73,7 +74,9 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
 
     tuned_us = []
     deepgemm_us = []
-    tuned_kernel_name = TUNED_KERNEL_NAMES[(shape.m, shape.n, shape.k)]
+    tuned_kernel_name = TUNED_KERNEL_NAMES.get(
+        (shape.m, shape.n, shape.k), FALLBACK_KERNEL_NAME
+    )
     for repeat in range(repeats):
         measurements = (
             (tuned_call, tuned_kernel_name, tuned_us),
@@ -98,6 +101,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         "deepgemm_median_us": statistics.median(deepgemm_us),
         "speedup": speedups,
         "speedup_median": statistics.median(speedups),
+        "selected_kernel": tuned_kernel_name,
     }
 
 
