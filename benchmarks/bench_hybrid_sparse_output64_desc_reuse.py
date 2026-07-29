@@ -21,6 +21,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_fused_mma_group,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_fused_mma_group_uniform_desc,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_fused_mma_group_constexpr_desc,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_fused_mma_group_constexpr_desc_branch_group,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output32x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_unroll_k,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_async_group3,
 )
@@ -63,6 +64,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     fused_mma_group_out = torch.empty_like(generic_out)
     uniform_desc_out = torch.empty_like(generic_out)
     constexpr_desc_out = torch.empty_like(generic_out)
+    constexpr_desc_branch_group_out = torch.empty_like(generic_out)
     output32_unroll_k_out = torch.empty_like(generic_out)
     async_group3_out = torch.empty_like(generic_out)
     deepgemm_out = torch.empty_like(generic_out)
@@ -93,6 +95,9 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
     constexpr_desc_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_fused_mma_group_constexpr_desc(
         activation, packed, out=constexpr_desc_out
     )
+    constexpr_desc_branch_group_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_fused_mma_group_constexpr_desc_branch_group(
+        activation, packed, out=constexpr_desc_branch_group_out
+    )
     output32_unroll_k_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output32x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_unroll_k(
         activation, packed, out=output32_unroll_k_out
     )
@@ -113,6 +118,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         fused_mma_group_call,
         uniform_desc_call,
         constexpr_desc_call,
+        constexpr_desc_branch_group_call,
         output32_unroll_k_call,
         async_group3_call,
         deepgemm_call,
@@ -129,6 +135,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         fused_mma_group_out,
         uniform_desc_out,
         constexpr_desc_out,
+        constexpr_desc_branch_group_out,
         output32_unroll_k_out,
         async_group3_out,
     ):
@@ -174,6 +181,11 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         (
             "constexpr_desc",
             constexpr_desc_call,
+            "hybrid_sparse_group_stage_output64x64",
+        ),
+        (
+            "constexpr_desc_branch_group",
+            constexpr_desc_branch_group_call,
             "hybrid_sparse_group_stage_output64x64",
         ),
         (
