@@ -4,27 +4,27 @@
 
 namespace deep_gemm {
 
-static int get_group_stage_output128x64_nm12_fastpath_desc_reuse_num_stages(
+static int get_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_num_stages(
         int block_n, int block_m);
 
-class SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseRuntime final:
-        public LaunchRuntime<SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseRuntime> {
+class SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseFusedMMAGroupRuntime final:
+        public LaunchRuntime<SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseFusedMMAGroupRuntime> {
 public:
     using Args =
         SM90HybridSparseProducerMetadataCopyOutput128x64Runtime::Args;
 
     static std::string generate_impl(const Args& args) {
         return fmt::format(R"(
-#include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse.cuh>
+#include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group.cuh>
 
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(
-        &hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse<{}, {}, {}>);
+        &hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group<{}, {}, {}>);
     (void)ptr;
 }}
 )",
             args.block_n, args.block_m,
-            get_group_stage_output128x64_nm12_fastpath_desc_reuse_num_stages(
+            get_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_num_stages(
                 args.block_n, args.block_m));
     }
 
@@ -38,7 +38,7 @@ static void __instantiate_kernel() {{
     }
 };
 
-static int get_group_stage_output128x64_nm12_fastpath_desc_reuse_num_stages(
+static int get_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_num_stages(
         const int block_n, const int block_m) {
     constexpr int max_smem_bytes = 232448;
     constexpr int output_bytes = 128 * 64 * sizeof(__nv_bfloat16);
@@ -61,7 +61,7 @@ static int get_group_stage_output128x64_nm12_fastpath_desc_reuse_num_stages(
     return 0;
 }
 
-static void sm90_hybrid_block_sparse_bf16_gemm_group_stage_output128x64_nm12_fastpath_desc_reuse(
+static void sm90_hybrid_block_sparse_bf16_gemm_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group(
         const torch::Tensor& a, const torch::Tensor& block_selector,
         const torch::Tensor& dense_values, const torch::Tensor& sparse_values,
         const torch::Tensor& hardware_metadata, const torch::Tensor& d,
@@ -73,7 +73,7 @@ static void sm90_hybrid_block_sparse_bf16_gemm_group_stage_output128x64_nm12_fas
     const int block_groups = k / (64 * block_m);
     const int dense_count = block_m - block_n;
     const int num_stages =
-        get_group_stage_output128x64_nm12_fastpath_desc_reuse_num_stages(block_n, block_m);
+        get_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_num_stages(block_n, block_m);
     const int stage_bytes =
         dense_count * 64 * 64 * sizeof(__nv_bfloat16) +
         block_n * 64 * 32 * sizeof(__nv_bfloat16) +
@@ -99,7 +99,7 @@ static void sm90_hybrid_block_sparse_bf16_gemm_group_stage_output128x64_nm12_fas
     const int ctas_per_sm = std::max(1, 232448 / smem_bytes);
     const int persistent_ctas = std::min(
         total_tiles, device_runtime->get_num_sms() * ctas_per_sm);
-    const auto args = SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseRuntime::Args {
+    const auto args = SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseFusedMMAGroupRuntime::Args {
         .block_selector = block_selector.data_ptr(),
         .hardware_metadata = hardware_metadata.data_ptr(),
         .d = d.data_ptr(),
@@ -112,9 +112,9 @@ static void sm90_hybrid_block_sparse_bf16_gemm_group_stage_output128x64_nm12_fas
         .launch_args = LaunchArgs(persistent_ctas, 256, smem_bytes),
     };
     const auto runtime = compiler->build(
-        "sm90_hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse",
-        SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseRuntime::generate(args));
-    SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseRuntime::launch(runtime, args);
+        "sm90_hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group",
+        SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseFusedMMAGroupRuntime::generate(args));
+    SM90HybridSparseGroupStageOutput128x64NM12FastpathDescReuseFusedMMAGroupRuntime::launch(runtime, args);
 }
 
 } // namespace deep_gemm
