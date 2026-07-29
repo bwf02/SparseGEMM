@@ -71,6 +71,23 @@ def _prepare_grouped_out(
     return out
 
 
+def _require_grouped_hardware_metadata(
+    a: torch.Tensor, packed_weight: HybridBlockSparseWeight
+) -> torch.Tensor:
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError(
+            "packed_weight does not contain lane-ready hardware metadata"
+        )
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    if metadata.device != a.device or not metadata.is_contiguous():
+        raise ValueError(
+            "hardware_metadata must be contiguous on the activation device"
+        )
+    return metadata
+
+
 def hybrid_block_sparse_gemm_naive(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
@@ -1822,6 +1839,74 @@ def hybrid_block_sparse_grouped_masked_naive(
         packed_weight.dense_values,
         packed_weight.sparse_values,
         packed_weight.sparse_metadata,
+        masked_m,
+        out,
+        packed_weight.layout.block_n,
+        packed_weight.layout.block_m,
+    )
+    return out
+
+
+def hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    grouped_layout: torch.Tensor,
+    m_alignment: int,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run fused WGMMA/TMA grouped GEMM with psum contiguous semantics."""
+    _, n, _ = _validate_grouped_inputs(a, packed_weight, grouped_layout, 2)
+    metadata = _require_grouped_hardware_metadata(a, packed_weight)
+    if not isinstance(m_alignment, int) or isinstance(m_alignment, bool):
+        raise TypeError("m_alignment must be an integer")
+    if m_alignment <= 0 or m_alignment % 64 != 0:
+        raise ValueError("m_alignment must be positive and divisible by 64")
+    out = _prepare_grouped_out((a.shape[0], n), a, out)
+
+    import deep_gemm
+
+    deep_gemm._C.hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
+        a,
+        packed_weight.block_selector,
+        packed_weight.dense_values,
+        packed_weight.sparse_values,
+        packed_weight.sparse_metadata,
+        metadata,
+        grouped_layout,
+        out,
+        m_alignment,
+        packed_weight.layout.block_n,
+        packed_weight.layout.block_m,
+    )
+    return out
+
+
+def hybrid_block_sparse_grouped_masked_wgmma_tma(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    masked_m: torch.Tensor,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run fused WGMMA/TMA grouped GEMM with per-expert valid M counts."""
+    experts, n, _ = _validate_grouped_inputs(a, packed_weight, masked_m, 3)
+    metadata = _require_grouped_hardware_metadata(a, packed_weight)
+    if a.shape[0] != experts:
+        raise ValueError(
+            f"activation experts ({a.shape[0]}) must match weight experts ({experts})"
+        )
+    if a.shape[1] % 64 != 0:
+        raise ValueError("masked activation capacity must be divisible by 64")
+    out = _prepare_grouped_out((experts, a.shape[1], n), a, out)
+
+    import deep_gemm
+
+    deep_gemm._C.hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
+        a,
+        packed_weight.block_selector,
+        packed_weight.dense_values,
+        packed_weight.sparse_values,
+        packed_weight.sparse_metadata,
+        metadata,
         masked_m,
         out,
         packed_weight.layout.block_n,

@@ -79,7 +79,9 @@ from .kernel import (
     hybrid_block_sparse_gemm_wgmma_tma_block128x128,
     hybrid_block_sparse_gemm_wgmma_tuned,
     hybrid_block_sparse_grouped_contiguous_naive,
+    hybrid_block_sparse_grouped_contiguous_wgmma_tma,
     hybrid_block_sparse_grouped_masked_naive,
+    hybrid_block_sparse_grouped_masked_wgmma_tma,
 )
 
 __all__ = [
@@ -155,7 +157,9 @@ __all__ = [
     "hybrid_block_sparse_gemm_wgmma_tuned",
     "hybrid_block_sparse_grouped_contiguous_naive",
     "hybrid_block_sparse_grouped_contiguous_ref",
+    "hybrid_block_sparse_grouped_contiguous_wgmma_tma",
     "hybrid_block_sparse_grouped_masked_naive",
     "hybrid_block_sparse_grouped_masked_ref",
+    "hybrid_block_sparse_grouped_masked_wgmma_tma",
     "hybrid_block_sparse_to_dense",
 ]

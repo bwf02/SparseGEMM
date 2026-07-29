@@ -52,3 +52,11 @@
 | both | 2048, 4096 | output128 + producer metadata + stage-kind |
 
 未收录 shape 或非 `1:2` pattern 回退到通用 `output64 x 64` group-stage kernel。性能结果只维护在 `hybrid_sparse_performance.xlsx`。
+
+## Grouped GEMM
+
+- Packed weight 直接使用 `[E, N, K]`，各 expert 共享同一种 layout，但拥有独立 selector、dense/sparse values 和 metadata。
+- Contiguous 模式使用 `A[total_m,K]` 与 psum `grouped_layout[E]`；expert 起点按 `m_alignment` 对齐，对齐空洞输出为零。
+- Masked 模式使用 `A[E,max_m,K]` 与 `masked_m[E]`；无效 tail 输出为零，第一版要求 `max_m % 64 == 0`。
+- Fused grouped kernel 使用 persistent `64 x 64` output tile、group-stage TMA、dense WGMMA、WGMMA.SP 和 STSM/TMA epilogue；每个 tile 解析 expert 后直接索引对应 packed stream，不生成 gather weight 或 partial output。
+- `*_naive` 三 kernel 路径继续作为 correctness baseline；`*_wgmma_tma` 是 fused grouped 入口。

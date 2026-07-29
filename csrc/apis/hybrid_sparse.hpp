@@ -3,6 +3,7 @@
 #include <torch/python.h>
 
 #include "../jit/device_runtime.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_fused_output64x64.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_naive.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_naive.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_tensorcore.hpp"
@@ -3485,6 +3486,41 @@ static void check_hybrid_grouped_common(
     DG_HOST_ASSERT(index_experts == num_experts);
 }
 
+static void check_hybrid_grouped_lane_ready_common(
+        const torch::Tensor& a,
+        const torch::Tensor& block_selector,
+        const torch::Tensor& dense_values,
+        const torch::Tensor& sparse_values,
+        const torch::Tensor& sparse_metadata,
+        const torch::Tensor& hardware_metadata,
+        const torch::Tensor& grouped_index,
+        const torch::Tensor& d,
+        const int block_n,
+        const int block_m,
+        const int num_experts,
+        const int n,
+        const int k) {
+    check_hybrid_grouped_common(
+        a, block_selector, dense_values, sparse_values, sparse_metadata,
+        grouped_index, d, block_n, block_m, num_experts, n, k);
+    DG_HOST_ASSERT(hardware_metadata.is_cuda());
+    DG_HOST_ASSERT(hardware_metadata.is_contiguous());
+    DG_HOST_ASSERT(hardware_metadata.get_device() == a.get_device());
+    DG_HOST_ASSERT(hardware_metadata.scalar_type() == torch::kInt);
+
+    const int block_rows = n / 64;
+    const int block_groups = k / (64 * block_m);
+    const auto [metadata_experts, metadata_rows, metadata_groups,
+                metadata_slots, metadata_k_tiles, metadata_warps,
+                metadata_lanes] = get_shape<7>(hardware_metadata);
+    DG_HOST_ASSERT(metadata_experts == num_experts);
+    DG_HOST_ASSERT(metadata_rows == block_rows);
+    DG_HOST_ASSERT(metadata_groups == block_groups);
+    DG_HOST_ASSERT(metadata_slots == block_n);
+    DG_HOST_ASSERT(metadata_k_tiles == 2 and metadata_warps == 4);
+    DG_HOST_ASSERT(metadata_lanes == 16);
+}
+
 static void hybrid_block_sparse_bf16_grouped_contiguous_naive(
         const torch::Tensor& a,
         const torch::Tensor& block_selector,
@@ -3572,6 +3608,61 @@ static void hybrid_block_sparse_bf16_grouped_masked_naive(
         block_n,
         block_m,
         HybridSparseGroupedMode::Masked);
+}
+
+static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
+        const torch::Tensor& a,
+        const torch::Tensor& block_selector,
+        const torch::Tensor& dense_values,
+        const torch::Tensor& sparse_values,
+        const torch::Tensor& sparse_metadata,
+        const torch::Tensor& hardware_metadata,
+        const torch::Tensor& grouped_layout,
+        const torch::Tensor& d,
+        const int& m_alignment,
+        const int& block_n,
+        const int& block_m) {
+    const auto [total_m, k] = get_shape<2>(a);
+    const auto [total_m_, n] = get_shape<2>(d);
+    const auto [num_experts, selector_rows, selector_groups] =
+        get_shape<3>(block_selector);
+    static_cast<void>(selector_rows);
+    static_cast<void>(selector_groups);
+    DG_HOST_ASSERT(total_m == total_m_ and total_m > 0);
+    DG_HOST_ASSERT(m_alignment > 0 and m_alignment % 64 == 0);
+    check_hybrid_grouped_lane_ready_common(
+        a, block_selector, dense_values, sparse_values, sparse_metadata,
+        hardware_metadata, grouped_layout, d, block_n, block_m,
+        num_experts, n, k);
+    sm90_hybrid_block_sparse_bf16_grouped_fused_output64x64(
+        a, block_selector, dense_values, sparse_values, hardware_metadata,
+        grouped_layout, d, total_m, n, k, num_experts, total_m,
+        m_alignment, block_n, block_m, 0);
+}
+
+static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
+        const torch::Tensor& a,
+        const torch::Tensor& block_selector,
+        const torch::Tensor& dense_values,
+        const torch::Tensor& sparse_values,
+        const torch::Tensor& sparse_metadata,
+        const torch::Tensor& hardware_metadata,
+        const torch::Tensor& masked_m,
+        const torch::Tensor& d,
+        const int& block_n,
+        const int& block_m) {
+    const auto [num_experts, max_m, k] = get_shape<3>(a);
+    const auto [num_experts_, max_m_, n] = get_shape<3>(d);
+    DG_HOST_ASSERT(num_experts == num_experts_ and max_m == max_m_);
+    DG_HOST_ASSERT(max_m > 0 and max_m % 64 == 0);
+    check_hybrid_grouped_lane_ready_common(
+        a, block_selector, dense_values, sparse_values, sparse_metadata,
+        hardware_metadata, masked_m, d, block_n, block_m,
+        num_experts, n, k);
+    sm90_hybrid_block_sparse_bf16_grouped_fused_output64x64(
+        a, block_selector, dense_values, sparse_values, hardware_metadata,
+        masked_m, d, num_experts * max_m, n, k, num_experts, max_m,
+        64, block_n, block_m, 1);
 }
 
 static void register_apis(pybind11::module_& m) {
@@ -4313,6 +4404,33 @@ static void register_apis(pybind11::module_& m) {
         pybind11::arg("dense_values"),
         pybind11::arg("sparse_values"),
         pybind11::arg("sparse_metadata"),
+        pybind11::arg("masked_m"),
+        pybind11::arg("d"),
+        pybind11::arg("block_n"),
+        pybind11::arg("block_m"));
+    m.def(
+        "hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma",
+        &hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma,
+        pybind11::arg("a"),
+        pybind11::arg("block_selector"),
+        pybind11::arg("dense_values"),
+        pybind11::arg("sparse_values"),
+        pybind11::arg("sparse_metadata"),
+        pybind11::arg("hardware_metadata"),
+        pybind11::arg("grouped_layout"),
+        pybind11::arg("d"),
+        pybind11::arg("m_alignment"),
+        pybind11::arg("block_n"),
+        pybind11::arg("block_m"));
+    m.def(
+        "hybrid_block_sparse_bf16_grouped_masked_wgmma_tma",
+        &hybrid_block_sparse_bf16_grouped_masked_wgmma_tma,
+        pybind11::arg("a"),
+        pybind11::arg("block_selector"),
+        pybind11::arg("dense_values"),
+        pybind11::arg("sparse_values"),
+        pybind11::arg("sparse_metadata"),
+        pybind11::arg("hardware_metadata"),
         pybind11::arg("masked_m"),
         pybind11::arg("d"),
         pybind11::arg("block_n"),

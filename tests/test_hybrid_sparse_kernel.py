@@ -74,8 +74,10 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_ref,
     hybrid_block_sparse_grouped_contiguous_naive,
     hybrid_block_sparse_grouped_contiguous_ref,
+    hybrid_block_sparse_grouped_contiguous_wgmma_tma,
     hybrid_block_sparse_grouped_masked_naive,
     hybrid_block_sparse_grouped_masked_ref,
+    hybrid_block_sparse_grouped_masked_wgmma_tma,
 )
 
 
@@ -1259,6 +1261,15 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         self.assertEqual(torch.count_nonzero(out[3:64]).item(), 0)
         self.assertEqual(torch.count_nonzero(out[66:]).item(), 0)
 
+        fused_out = hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+            activation, packed, grouped_layout, m_alignment=64
+        )
+        torch.testing.assert_close(
+            fused_out, expected, rtol=1e-2, atol=1e-2
+        )
+        self.assertEqual(torch.count_nonzero(fused_out[3:64]).item(), 0)
+        self.assertEqual(torch.count_nonzero(fused_out[66:]).item(), 0)
+
     def test_grouped_masked_matches_reference_and_zeros_tail(self):
         torch.manual_seed(404)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)
@@ -1278,6 +1289,52 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
         self.assertEqual(torch.count_nonzero(actual[0]).item(), 0)
         self.assertEqual(torch.count_nonzero(actual[1, 4:]).item(), 0)
+
+    def test_grouped_masked_wgmma_tma_matches_reference_and_zeros_tail(self):
+        torch.manual_seed(405)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(3, 128, 256, device="cuda", dtype=torch.bfloat16)
+        masks = torch.stack(
+            [
+                make_mask(weight[0], layout, (0,)),
+                make_mask(weight[1], layout, (1,)),
+                make_mask(weight[2], layout, (0,)),
+            ]
+        )
+        packed = dense_to_hybrid_block_sparse(weight, masks, layout)
+        activation = torch.randn(3, 64, 256, device="cuda", dtype=torch.bfloat16)
+        masked_m = torch.tensor([0, 17, 64], device="cuda", dtype=torch.int32)
+
+        expected = hybrid_block_sparse_grouped_masked_ref(
+            activation, packed, masked_m
+        )
+        actual = hybrid_block_sparse_grouped_masked_wgmma_tma(
+            activation, packed, masked_m
+        )
+
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+        self.assertEqual(torch.count_nonzero(actual[0]).item(), 0)
+        self.assertEqual(torch.count_nonzero(actual[1, 17:]).item(), 0)
+
+    def test_grouped_wgmma_tma_requires_aligned_m_layout(self):
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(1, 64, 128, device="cuda", dtype=torch.bfloat16)
+        mask = make_grouped_mask(weight, layout, sparse_block_ids=(0,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+
+        with self.assertRaisesRegex(ValueError, "divisible by 64"):
+            hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+                torch.randn(64, 128, device="cuda", dtype=torch.bfloat16),
+                packed,
+                torch.tensor([1], device="cuda", dtype=torch.int32),
+                m_alignment=32,
+            )
+        with self.assertRaisesRegex(ValueError, "capacity must be divisible by 64"):
+            hybrid_block_sparse_grouped_masked_wgmma_tma(
+                torch.randn(1, 9, 128, device="cuda", dtype=torch.bfloat16),
+                packed,
+                torch.tensor([1], device="cuda", dtype=torch.int32),
+            )
 
     def test_grouped_kernel_requires_int32_index(self):
         layout = HybridBlockSparseLayout(64, 64, 1, 2)

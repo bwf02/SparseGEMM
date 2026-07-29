@@ -1,4 +1,4 @@
-"""Benchmark naive hybrid grouped GEMM against DeepGEMM grouped BF16."""
+"""Benchmark fused hybrid grouped GEMM against DeepGEMM grouped BF16."""
 
 import argparse
 
@@ -10,18 +10,14 @@ from deep_gemm.utils import align
 from sparse_gemm.hybrid_sparse import (
     HybridBlockSparseLayout,
     dense_to_hybrid_block_sparse,
-    hybrid_block_sparse_grouped_contiguous_naive,
-    hybrid_block_sparse_grouped_masked_naive,
+    hybrid_block_sparse_grouped_contiguous_wgmma_tma,
+    hybrid_block_sparse_grouped_masked_wgmma_tma,
 )
 
 from bench_hybrid_sparse import make_hybrid_mask
 
 
-HYBRID_GROUPED_KERNEL_NAMES = (
-    "hybrid_sparse_grouped_dense_naive",
-    "hybrid_sparse_grouped_2_4_naive",
-    "hybrid_sparse_grouped_reduce_naive",
-)
+GROUPED_FUSED_KERNEL = "hybrid_sparse_grouped_fused_output64x64"
 
 
 def make_packed_weight(
@@ -34,10 +30,10 @@ def make_packed_weight(
     return dense_to_hybrid_block_sparse(source, mask, layout)
 
 
-def time_hybrid(fn, num_tests: int, flush_l2: bool) -> tuple[float, ...]:
+def time_hybrid(fn, kernel_name: str, num_tests: int, flush_l2: bool) -> float:
     return bench_kineto(
         fn,
-        HYBRID_GROUPED_KERNEL_NAMES,
+        kernel_name,
         num_tests=num_tests,
         suppress_kineto_output=True,
         flush_l2=flush_l2,
@@ -50,10 +46,9 @@ def print_result(
     n: int,
     k: int,
     sparsity: float,
-    hybrid_times: tuple[float, ...],
+    hybrid_time: float,
     deepgemm_time: float,
 ) -> None:
-    hybrid_time = sum(hybrid_times)
     dense_flops = 2 * valid_m * n * k
     executed_flops = dense_flops * (1.0 - sparsity)
     print(
@@ -62,10 +57,7 @@ def print_result(
         f"{deepgemm_time / hybrid_time:8.3f}x | "
         f"{dense_flops / hybrid_time / 1e12:10.2f} "
         f"{executed_flops / hybrid_time / 1e12:10.2f} "
-        f"{dense_flops / deepgemm_time / 1e12:10.2f} | "
-        f"{hybrid_times[0] * 1e6:8.1f} "
-        f"{hybrid_times[1] * 1e6:8.1f} "
-        f"{hybrid_times[2] * 1e6:8.1f}"
+        f"{dense_flops / deepgemm_time / 1e12:10.2f}"
     )
 
 
@@ -91,7 +83,7 @@ def benchmark_contiguous(
     hybrid_out = torch.empty(total_m, n, device="cuda", dtype=torch.bfloat16)
     deepgemm_out = torch.empty_like(hybrid_out)
 
-    hybrid_fn = lambda: hybrid_block_sparse_grouped_contiguous_naive(
+    hybrid_fn = lambda: hybrid_block_sparse_grouped_contiguous_wgmma_tma(
         a, packed_weight, grouped_layout, m_alignment, out=hybrid_out
     )
     deepgemm_fn = lambda: deep_gemm.m_grouped_bf16_gemm_nt_contiguous(
@@ -123,7 +115,9 @@ def benchmark_contiguous(
             hybrid_out[~valid_rows], torch.zeros_like(hybrid_out[~valid_rows])
         )
 
-    hybrid_times = time_hybrid(hybrid_fn, num_tests, flush_l2)
+    hybrid_time = time_hybrid(
+        hybrid_fn, GROUPED_FUSED_KERNEL, num_tests, flush_l2
+    )
     deepgemm_time = bench_kineto(
         deepgemm_fn,
         "bf16_gemm",
@@ -137,7 +131,7 @@ def benchmark_contiguous(
         n,
         k,
         packed_weight.layout.sparsity,
-        hybrid_times,
+        hybrid_time,
         deepgemm_time,
     )
 
@@ -160,7 +154,7 @@ def benchmark_masked(
     )
     deepgemm_out = torch.empty_like(hybrid_out)
 
-    hybrid_fn = lambda: hybrid_block_sparse_grouped_masked_naive(
+    hybrid_fn = lambda: hybrid_block_sparse_grouped_masked_wgmma_tma(
         a, packed_weight, masked_m, out=hybrid_out
     )
     deepgemm_fn = lambda: deep_gemm.m_grouped_bf16_gemm_nt_masked(
@@ -176,7 +170,9 @@ def benchmark_masked(
         atol=2e-2,
     )
 
-    hybrid_times = time_hybrid(hybrid_fn, num_tests, flush_l2)
+    hybrid_time = time_hybrid(
+        hybrid_fn, GROUPED_FUSED_KERNEL, num_tests, flush_l2
+    )
     deepgemm_time = bench_kineto(
         deepgemm_fn,
         "bf16_gemm",
@@ -190,7 +186,7 @@ def benchmark_masked(
         n,
         k,
         packed_weight.layout.sparsity,
-        hybrid_times,
+        hybrid_time,
         deepgemm_time,
     )
 
@@ -244,7 +240,7 @@ def main() -> None:
     print("Timing: CUDA kernel time from bench_kineto; packing is excluded")
     print(
         "mode        valid-M | hybrid(us) deepgemm(us)  speedup | "
-        "hyb-eff-TF hyb-exec-TF   dg-TFLOPS | dense(us) sparse(us) reduce(us)"
+        "hyb-eff-TF hyb-exec-TF   dg-TFLOPS"
     )
     benchmark_contiguous(
         packed_weight,
