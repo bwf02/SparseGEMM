@@ -3713,6 +3713,13 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         return;
     }
     if (block_n == 1 and block_m == 2 and max_m % 128 == 0) {
+        if (n == 1408 and k == 2048 and max_m == 128) {
+            sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2(
+                a, block_selector, dense_values, sparse_values,
+                hardware_metadata, masked_m, d, num_experts, max_m,
+                n, k, block_n, block_m);
+            return;
+        }
         sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_persistent(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, masked_m, d, num_experts, max_m,
