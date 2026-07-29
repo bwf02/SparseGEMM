@@ -17,6 +17,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k,
 )
 
 from bench_hybrid_sparse import make_hybrid_mask
@@ -47,6 +48,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     compact_out = torch.empty_like(baseline_out)
     group_stage_out = torch.empty_like(baseline_out)
     fused_mma_group_out = torch.empty_like(baseline_out)
+    fixed_shape_unroll_k_out = torch.empty_like(baseline_out)
     deepgemm_out = torch.empty_like(baseline_out)
     baseline_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind(
         activation, packed, out=baseline_out
@@ -63,6 +65,9 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     fused_mma_group_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group(
         activation, packed, out=fused_mma_group_out
     )
+    fixed_shape_unroll_k_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k(
+        activation, packed, out=fixed_shape_unroll_k_out
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_out
     )
@@ -73,6 +78,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
         compact_call,
         group_stage_call,
         fused_mma_group_call,
+        fixed_shape_unroll_k_call,
         deepgemm_call,
     ):
         function()
@@ -82,6 +88,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     torch.testing.assert_close(compact_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(group_stage_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(fused_mma_group_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(fixed_shape_unroll_k_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     measurements = (
         ("baseline", baseline_call, "hybrid_sparse_output128x64_stage_kind"),
@@ -104,6 +111,11 @@ def benchmark(repeats: int, num_tests: int) -> dict:
             "fused_mma_group",
             fused_mma_group_call,
             "hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group",
+        ),
+        (
+            "fixed_shape_unroll_k",
+            fixed_shape_unroll_k_call,
+            "hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k",
         ),
         ("deepgemm", deepgemm_call, "bf16_gemm"),
     )
