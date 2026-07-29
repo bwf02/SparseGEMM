@@ -150,7 +150,7 @@ def benchmark_shape(shape: Shape, repeats: int, num_tests: int) -> dict:
         (
             "fused_mma_group",
             fused_mma_group_call,
-            "hybrid_sparse_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_stage7_fused_mma_group",
+            "hybrid_sparse_group_stage_output64x64",
         ),
         (
             "output32_unroll_k",
