@@ -11,10 +11,10 @@ public:
         void* block_selector;
         void* hardware_metadata;
         void* grouped_index;
-        cute::TmaDescriptor tensor_map_activation;
-        cute::TmaDescriptor tensor_map_dense;
-        cute::TmaDescriptor tensor_map_sparse;
-        cute::TmaDescriptor tensor_map_output;
+        CUtensorMap tensor_map_activation;
+        CUtensorMap tensor_map_dense;
+        CUtensorMap tensor_map_sparse;
+        CUtensorMap tensor_map_output;
         int total_rows;
         int n;
         int k;
