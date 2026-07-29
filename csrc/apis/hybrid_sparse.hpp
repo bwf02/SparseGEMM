@@ -9,6 +9,7 @@
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12_persistent.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_full_grid.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_persistent.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_stage2.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_stage3.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_naive.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_naive.hpp"
@@ -3674,7 +3675,7 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         hardware_metadata, masked_m, d, block_n, block_m,
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and max_m == 64) {
-        sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage3(
+        sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, masked_m, d, num_experts, max_m,
             n, k, block_n, block_m);
