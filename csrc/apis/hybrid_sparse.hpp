@@ -4,6 +4,7 @@
 
 #include "../jit/device_runtime.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_contiguous_output128x64_nm12_persistent.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_contiguous_output128x128_nm12_stage2_dual_wg.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_contiguous_output64x128_nm12_stage2_single_wg.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_fused_output64x64.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12.hpp"
@@ -3648,7 +3649,7 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and m_alignment == 128 and
         total_m == 1024 and n % 128 == 0) {
-        sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
+        sm90_hybrid_block_sparse_bf16_grouped_contiguous_output128x128_nm12_stage2_dual_wg(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, grouped_layout, d, total_m, num_experts,
             m_alignment, n, k, block_n, block_m);
