@@ -19,6 +19,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage5_output_reuse,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage5_async_group2,
 )
 
 from bench_hybrid_sparse import make_hybrid_mask
@@ -51,6 +52,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     fused_mma_group_out = torch.empty_like(baseline_out)
     fixed_shape_unroll_k_out = torch.empty_like(baseline_out)
     stage5_output_reuse_out = torch.empty_like(baseline_out)
+    stage5_async_group2_out = torch.empty_like(baseline_out)
     deepgemm_out = torch.empty_like(baseline_out)
     baseline_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind(
         activation, packed, out=baseline_out
@@ -73,6 +75,9 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     stage5_output_reuse_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage5_output_reuse(
         activation, packed, out=stage5_output_reuse_out
     )
+    stage5_async_group2_call = lambda: hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage5_async_group2(
+        activation, packed, out=stage5_async_group2_out
+    )
     deepgemm_call = lambda: deep_gemm.bf16_gemm_nt(
         activation, dense_weight, deepgemm_out
     )
@@ -85,6 +90,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
         fused_mma_group_call,
         fixed_shape_unroll_k_call,
         stage5_output_reuse_call,
+        stage5_async_group2_call,
         deepgemm_call,
     ):
         function()
@@ -96,6 +102,7 @@ def benchmark(repeats: int, num_tests: int) -> dict:
     torch.testing.assert_close(fused_mma_group_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(fixed_shape_unroll_k_out, deepgemm_out, rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(stage5_output_reuse_out, deepgemm_out, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(stage5_async_group2_out, deepgemm_out, rtol=2e-2, atol=2e-2)
 
     measurements = (
         ("baseline", baseline_call, "hybrid_sparse_output128x64_stage_kind"),
@@ -127,6 +134,11 @@ def benchmark(repeats: int, num_tests: int) -> dict:
         (
             "stage5_output_reuse",
             stage5_output_reuse_call,
+            "hybrid_sparse_group_stage_output128x64",
+        ),
+        (
+            "stage5_async_group2",
+            stage5_async_group2_call,
             "hybrid_sparse_group_stage_output128x64",
         ),
         ("deepgemm", deepgemm_call, "bf16_gemm"),

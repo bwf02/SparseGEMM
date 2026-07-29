@@ -1216,6 +1216,30 @@ def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_st
     )
 
 
+def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage5_async_group2(
+    a: torch.Tensor,
+    packed_weight: HybridBlockSparseWeight,
+    out: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Run five TMA stages while keeping one committed WGMMA group in flight."""
+    if (packed_weight.layout.block_n, packed_weight.layout.block_m) != (1, 2):
+        raise ValueError("output128 stage-5 async group requires N:M=1:2")
+    metadata = packed_weight.hardware_metadata
+    if metadata is None:
+        raise ValueError(
+            "packed_weight does not contain lane-ready hardware metadata"
+        )
+    if metadata.dtype != torch.int32:
+        raise TypeError("hardware_metadata must have dtype torch.int32")
+    return _hybrid_block_sparse_gemm_wgmma_tma(
+        a,
+        packed_weight,
+        out,
+        "hybrid_block_sparse_bf16_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage5_async_group2",
+        metadata=metadata,
+    )
+
+
 def hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64_nm12_fastpath(
     a: torch.Tensor,
     packed_weight: HybridBlockSparseWeight,
