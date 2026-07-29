@@ -3646,7 +3646,7 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         hardware_metadata, grouped_layout, d, block_n, block_m,
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and
-        m_alignment == 128 and total_m % 128 == 0) {
+        m_alignment == 128 and total_m % 128 == 0 and total_m != 1024) {
         sm90_hybrid_block_sparse_bf16_grouped_contiguous_output128x64_nm12_persistent(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, grouped_layout, d, total_m, num_experts,
