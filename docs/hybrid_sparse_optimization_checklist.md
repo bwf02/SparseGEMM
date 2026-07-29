@@ -53,3 +53,8 @@
 - [x] **compact output128 CTA**，指令数下降但 occupancy 和延迟回退，因此保留实现但不进入 dispatch。
 - [x] **小 M 与中 M 反例验证**，output48 不适合 `M=128, N=2048`，output88 不适合 `M=512, N=1408`，两者均不进入对应 dispatch。
 - [x] **8 个指定 shape 最终复测**，每个 shape 完成 7 轮、每轮 300 次配对计时，相对 DeepGEMM 的 speedup 为 `1.068x–1.154x`。
+- [x] **M=128 constexpr descriptor branch group**，WGMMA 控制指令减少并将 `128 x 2048 x 1408` 提升至 DeepGEMM 的 `1.176x`。
+- [x] **full-grid branch-group fallback**，解决多 wave persistent stage 生命周期问题但性能明显回退，因此仅保留为 correctness fallback。
+- [x] **output128 fixed-shape K unroll**，将 `256 x 2048 x 1408` 降至约 `11.85 us`，但尚未达到相对 DeepGEMM `1.15x`。
+- [x] **5-stage output-buffer 复用**，正确容纳第五个 TMA stage，但非幂次环索引增加 `R2UR` 且稳定延迟无改善。
+- [x] **4-stage 双异步 WGMMA group**，三批 7×300 中位为 `11.779 us`，相对 serial 提升 `0.62%` 并用于精确 shape dispatch。
