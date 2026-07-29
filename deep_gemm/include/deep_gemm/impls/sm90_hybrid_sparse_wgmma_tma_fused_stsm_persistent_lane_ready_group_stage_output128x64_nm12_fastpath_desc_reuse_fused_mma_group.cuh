@@ -124,7 +124,7 @@ __device__ __forceinline__ void advance_pipeline_group_stage_128x64_nm12_desc_re
 
 template <int kBlockN, int kBlockM, int kPipelineStages>
 __global__ __launch_bounds__(kThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroup, 1)
-void hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse(
+void hybrid_sparse_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group(
         const long long* block_selector, const unsigned* hardware_metadata,
         __nv_bfloat16*,
         const __grid_constant__ cute::TmaDescriptor tensor_map_activation,
