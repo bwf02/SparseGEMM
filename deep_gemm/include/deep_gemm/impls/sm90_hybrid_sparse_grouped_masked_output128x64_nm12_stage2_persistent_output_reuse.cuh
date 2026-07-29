@@ -518,18 +518,13 @@ void hybrid_sparse_grouped_masked_output128x64_nm12_stage2_persistent_output_reu
 
 #pragma unroll
             for (int atom = 0; atom < 16; ++atom) {
-                const int row = lane & 7;
-                const bool row_is_valid = atom * 8 + row < valid_rows;
                 const auto bf16_0 = __float22bfloat162_rn(
-                    row_is_valid
-                        ? float2{accumulator[atom * 4],
-                                 accumulator[atom * 4 + 1]}
-                        : float2{0.0f, 0.0f});
+                    {accumulator[atom * 4],
+                     accumulator[atom * 4 + 1]});
                 const auto bf16_1 = __float22bfloat162_rn(
-                    row_is_valid
-                        ? float2{accumulator[atom * 4 + 2],
-                                 accumulator[atom * 4 + 3]}
-                        : float2{0.0f, 0.0f});
+                    {accumulator[atom * 4 + 2],
+                     accumulator[atom * 4 + 3]});
+                const int row = lane & 7;
                 const int col = warp_in_math_wg * 2 + lane / 8;
                 auto* smem_ptr =
                     smem_output + (atom * 8 + row) * kBlock +
@@ -539,6 +534,18 @@ void hybrid_sparse_grouped_masked_output128x64_nm12_stage2_persistent_output_reu
                     bf16_0, bf16_1, smem_ptr);
             }
             cute::tma_store_fence();
+            cutlass::arch::NamedBarrier::sync(
+                kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuse, 0);
+            for (int index = static_cast<int>(threadIdx.x);
+                 index < (128 - valid_rows) * 64;
+                 index += kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuse) {
+                const int row = valid_rows + index / 64;
+                const int col = index % 64;
+                const int physical_col =
+                    ((col / 8) ^ (row & 7)) * 8 + col % 8;
+                smem_output[row * 64 + physical_col] =
+                    __float2bfloat16(0.0f);
+            }
             cutlass::arch::NamedBarrier::sync(
                 kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuse, 0);
             if (warp == 0 && cute::elect_one_sync()) {
