@@ -105,7 +105,8 @@ void hybrid_sparse_grouped_masked_output64x128_nm12_stage2(
     const int block_row_base = tile_n * kWeightRows;
     const int output_tile_m = expert * kMaxM;
     const int output_tile_n = tile_n * kGroupedOutput64x128N;
-    const int valid_rows = max(0, min(64, grouped_index[expert]));
+    const int remaining = grouped_index[expert];
+    const int valid_rows = remaining <= 0 ? 0 : (remaining < 64 ? remaining : 64);
 
     if (warp == 10) {
         const bool is_leader = cute::elect_one_sync();
@@ -266,8 +267,8 @@ void hybrid_sparse_grouped_masked_output64x128_nm12_stage2(
                 const int row = lane & 7;
                 const int col = warp_in_math_group * 2 + lane / 8;
                 auto* smem_ptr =
-                    smem_output + (atom * 8 + row) * kGroupedOutput64x128N +
-                    kWeightRow * 64 + ((col ^ row) * 8);
+                    smem_output + kWeightRow * 64 * 64 +
+                    (atom * 8 + row) * 64 + ((col ^ row) * 8);
                 deep_gemm::ptx::SM90_U32x2_STSM_T<__nv_bfloat162>::copy(
                     bf16_0, bf16_1, smem_ptr);
             }
@@ -277,8 +278,7 @@ void hybrid_sparse_grouped_masked_output64x128_nm12_stage2(
                 const int col = index % 64;
                 const int physical_col =
                     ((col / 8) ^ (row & 7)) * 8 + col % 8;
-                smem_output[row * kGroupedOutput64x128N +
-                            kWeightRow * 64 + physical_col] =
+                smem_output[kWeightRow * 64 * 64 + row * 64 + physical_col] =
                     __float2bfloat16(0.0f);
             }
         };
@@ -290,8 +290,13 @@ void hybrid_sparse_grouped_masked_output64x128_nm12_stage2(
         cute::tma_store_fence();
         cutlass::arch::NamedBarrier::sync(kGroupedOutput64x128MathThreads, 0);
         if (warp == 0 && cute::elect_one_sync()) {
-            cute::SM90_TMA_STORE_2D::copy(
-                &tensor_map_output, smem_output, output_tile_n, output_tile_m);
+#pragma unroll
+            for (int output_atom = 0; output_atom < 2; ++output_atom) {
+                cute::SM90_TMA_STORE_2D::copy(
+                    &tensor_map_output,
+                    smem_output + output_atom * 64 * 64,
+                    output_tile_n + output_atom * 64, output_tile_m);
+            }
             cute::tma_store_arrive();
             cute::tma_store_wait<0>();
         }
