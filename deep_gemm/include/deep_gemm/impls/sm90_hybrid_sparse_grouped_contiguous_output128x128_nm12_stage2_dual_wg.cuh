@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deep_gemm/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_full_grid.cuh>
 #include <deep_gemm/impls/sm90_hybrid_sparse_grouped_contiguous_output128x64_nm12_persistent.cuh>
 
 constexpr int kGroupedContiguousOutput128x128DualWGM = 128;
