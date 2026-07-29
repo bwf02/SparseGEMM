@@ -352,7 +352,7 @@ void hybrid_sparse_group_stage_output64x64_nm12_fastpath_desc_reuse_fixed_shape_
                         constexpr unsigned kPhase =
                             (kGroup / kPipelineStages) & 1;
                         constexpr unsigned kStageByteOffset =
-                            kStage * kStageBytes;
+                            1024 + kStage * kStageBytes;
                         constexpr unsigned kDenseByteOffset =
                             kStageByteOffset;
                         constexpr unsigned kSparseByteOffset =
