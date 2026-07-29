@@ -40,6 +40,7 @@ from sparse_gemm.hybrid_sparse import (
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output96x64_nm12_fastpath_desc_reuse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output88x64_nm12_fastpath_desc_reuse,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse,
+    hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_merge_k2,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy,
     hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64,
@@ -151,6 +152,20 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
 
         expected = hybrid_block_sparse_gemm_ref(activation, packed)
         actual = hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse(
+            activation, packed
+        )
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
+    def test_output128_fused_mma_group_matches_reference(self):
+        torch.manual_seed(134)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(128, 256, device="cuda", dtype=torch.bfloat16)
+        packed = dense_to_hybrid_block_sparse(
+            weight, make_mask(weight, layout, (1,)), layout
+        )
+        activation = torch.randn(256, 256, device="cuda", dtype=torch.bfloat16)
+        expected = hybrid_block_sparse_gemm_ref(activation, packed)
+        actual = hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output128x64_nm12_fastpath_desc_reuse_fused_mma_group(
             activation, packed
         )
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
