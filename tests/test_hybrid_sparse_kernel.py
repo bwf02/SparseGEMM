@@ -1267,6 +1267,33 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         torch.testing.assert_close(
             fused_out, expected, rtol=1e-2, atol=1e-2
         )
+
+    def test_grouped_contiguous_output128_matches_reference(self):
+        torch.manual_seed(304)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(
+            3, 128, 256, device="cuda", dtype=torch.bfloat16
+        )
+        mask = make_grouped_mask(weight, layout, sparse_block_ids=(1,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+        activation = torch.randn(
+            384, 256, device="cuda", dtype=torch.bfloat16
+        )
+        grouped_layout = torch.tensor(
+            [3, 129, 258], device="cuda", dtype=torch.int32
+        )
+
+        expected = hybrid_block_sparse_grouped_contiguous_ref(
+            activation, packed, grouped_layout, m_alignment=128
+        )
+        actual = hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+            activation, packed, grouped_layout, m_alignment=128
+        )
+
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+        self.assertEqual(torch.count_nonzero(actual[3:128]).item(), 0)
+        self.assertEqual(torch.count_nonzero(actual[129:256]).item(), 0)
+        self.assertEqual(torch.count_nonzero(actual[258:]).item(), 0)
         self.assertEqual(torch.count_nonzero(fused_out[3:64]).item(), 0)
         self.assertEqual(torch.count_nonzero(fused_out[66:]).item(), 0)
 

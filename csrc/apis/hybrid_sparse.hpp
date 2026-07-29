@@ -3,6 +3,7 @@
 #include <torch/python.h>
 
 #include "../jit/device_runtime.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_contiguous_output128x64_nm12_persistent.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_fused_output64x64.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12_persistent.hpp"
@@ -3636,6 +3637,14 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         a, block_selector, dense_values, sparse_values, sparse_metadata,
         hardware_metadata, grouped_layout, d, block_n, block_m,
         num_experts, n, k);
+    if (block_n == 1 and block_m == 2 and
+        m_alignment == 128 and total_m % 128 == 0) {
+        sm90_hybrid_block_sparse_bf16_grouped_contiguous_output128x64_nm12_persistent(
+            a, block_selector, dense_values, sparse_values,
+            hardware_metadata, grouped_layout, d, total_m, num_experts,
+            m_alignment, n, k, block_n, block_m);
+        return;
+    }
     sm90_hybrid_block_sparse_bf16_grouped_fused_output64x64(
         a, block_selector, dense_values, sparse_values, hardware_metadata,
         grouped_layout, d, total_m, n, k, num_experts, total_m,
