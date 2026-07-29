@@ -340,15 +340,14 @@ void hybrid_sparse_grouped_fused_output64x64(
 #pragma unroll
             for (int atom = 0; atom < 8; ++atom) {
                 const int row = atom * 8 + (lane & 7);
-                const bool row_is_valid = row < valid_rows;
                 const auto bf16_0 = __float22bfloat162_rn(
                     make_float2(
-                        row_is_valid ? accumulator[atom * 4] : 0.0f,
-                        row_is_valid ? accumulator[atom * 4 + 1] : 0.0f));
+                        accumulator[atom * 4],
+                        accumulator[atom * 4 + 1]));
                 const auto bf16_1 = __float22bfloat162_rn(
                     make_float2(
-                        row_is_valid ? accumulator[atom * 4 + 2] : 0.0f,
-                        row_is_valid ? accumulator[atom * 4 + 3] : 0.0f));
+                        accumulator[atom * 4 + 2],
+                        accumulator[atom * 4 + 3]));
                 const int swizzle_row = lane & 7;
                 const int col = warp_in_math_wg * 2 + lane / 8;
                 auto* smem_ptr =
@@ -358,6 +357,18 @@ void hybrid_sparse_grouped_fused_output64x64(
                     __nv_bfloat162>::copy(bf16_0, bf16_1, smem_ptr);
             }
             cute::tma_store_fence();
+            cutlass::arch::NamedBarrier::sync(
+                kMathThreadsProducerMetadataGroupStage64x64, 0);
+            for (int index = static_cast<int>(threadIdx.x);
+                 index < (64 - valid_rows) * 64;
+                 index += kMathThreadsProducerMetadataGroupStage64x64) {
+                const int row = valid_rows + index / 64;
+                const int col = index % 64;
+                const int physical_col =
+                    ((col / 8) ^ (row & 7)) * 8 + col % 8;
+                smem_output[row * 64 + physical_col] =
+                    __float2bfloat16(0.0f);
+            }
             cutlass::arch::NamedBarrier::sync(
                 kMathThreadsProducerMetadataGroupStage64x64, 0);
             if (warp == 0 && cute::elect_one_sync()) {
