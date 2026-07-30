@@ -11,6 +11,7 @@
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_fused_output64x64.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12_persistent.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12_stage2_persistent_output_reuse.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12_stage2_persistent_output_reuse_warp_handshake.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output128x64_nm12_stage2.hpp"
@@ -3725,8 +3726,12 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         return;
     }
     if (block_n == 1 and block_m == 2 and max_m % 128 == 0) {
-        if (max_m == 256 ||
-            (max_m == 128 && n == 1408 && k == 2048)) {
+        if (max_m == 128 && n == 1408 && k == 2048) {
+            sm90_hybrid_block_sparse_bf16_grouped_masked_output128x128_nm12_stage3_persistent(
+                a, block_selector, dense_values, sparse_values,
+                hardware_metadata, masked_m, d, num_experts, max_m,
+                n, k, block_n, block_m);
+        } else if (max_m == 256) {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_persistent(
                 a, block_selector, dense_values, sparse_values,
                 hardware_metadata, masked_m, d, num_experts, max_m,
