@@ -58,3 +58,6 @@
 - [x] **output128 fixed-shape K unroll**，将 `256 x 2048 x 1408` 降至约 `11.85 us`，但尚未达到相对 DeepGEMM `1.15x`。
 - [x] **5-stage output-buffer 复用**，正确容纳第五个 TMA stage，但非幂次环索引增加 `R2UR` 且稳定延迟无改善。
 - [x] **4-stage 双异步 WGMMA group**，三批 7×300 中位为 `11.779 us`，相对 serial 提升 `0.62%` 并用于精确 shape dispatch。
+- [x] **grouped M1024 双 accumulator ping-pong**，修复复用 accumulator 前缺少 wait 的正确性问题，但寄存器从 `94` 增至 `158/thread`，延迟仍为约 `46.4 us`，因此不采用。
+- [x] **grouped M1024 的 M64 stage-3/2-CTA 调度**，grid 从 `78` 增至 `156`，achieved occupancy 从 `7.9%` 提升至 `14.88%`，`1024 x 1408 x 2048` 降至约 `40.3 us`。
+- [x] **grouped M1024 的 M64 stage-2/3-CTA 调度**，grid 增至 `234`、theoretical occupancy 达到 `37.5%`；三轮 100 次计时为 `38.6–38.8 us`，相对 DeepGEMM 为 `1.313x–1.322x`，进入目标 shape 的默认 dispatch。
