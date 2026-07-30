@@ -38,6 +38,7 @@
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_stage3_merge_k2.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_stage2_async_group2.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_stage2_cluster2.hpp"
+#include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_stage2_cluster2_masked_epilogue.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_stage2_compact_producer.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_masked_output64x64_nm12_fixed_stage3.hpp"
 #include "../jit_kernels/impls/sm90_hybrid_sparse_grouped_naive.hpp"
@@ -3721,7 +3722,7 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
                     hardware_metadata, masked_m, d, num_experts, max_m,
                     n, k, block_n, block_m);
             } else {
-                sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2_cluster2(
+                sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_stage2_cluster2_masked_epilogue(
                     a, block_selector, dense_values, sparse_values,
                     hardware_metadata, masked_m, d, num_experts, max_m,
                     n, k, block_n, block_m);
