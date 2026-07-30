@@ -1886,8 +1886,14 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
     packed_weight: HybridBlockSparseWeight,
     masked_m: torch.Tensor,
     out: Optional[torch.Tensor] = None,
+    expected_m: Optional[int] = None,
 ) -> torch.Tensor:
-    """Run fused WGMMA/TMA grouped GEMM with per-expert valid M counts."""
+    """Run fused WGMMA/TMA grouped GEMM with per-expert valid M counts.
+
+    ``expected_m`` is a performance-only dispatch hint. It defaults to the
+    masked activation capacity and does not constrain the values in
+    ``masked_m``.
+    """
     experts, n, _ = _validate_grouped_inputs(a, packed_weight, masked_m, 3)
     metadata = _require_grouped_hardware_metadata(a, packed_weight)
     if a.shape[0] != experts:
@@ -1896,6 +1902,14 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
         )
     if a.shape[1] % 64 != 0:
         raise ValueError("masked activation capacity must be divisible by 64")
+    if expected_m is None:
+        expected_m = a.shape[1]
+    if not isinstance(expected_m, int) or isinstance(expected_m, bool):
+        raise TypeError("expected_m must be an integer")
+    if expected_m <= 0 or expected_m > a.shape[1]:
+        raise ValueError(
+            "expected_m must be positive and no greater than activation capacity"
+        )
     out = _prepare_grouped_out((experts, a.shape[1], n), a, out)
 
     import deep_gemm
@@ -1909,6 +1923,7 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
         metadata,
         masked_m,
         out,
+        expected_m,
         packed_weight.layout.block_n,
         packed_weight.layout.block_m,
     )

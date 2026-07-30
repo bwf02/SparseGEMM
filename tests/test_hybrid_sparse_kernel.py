@@ -1336,7 +1336,7 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             activation, packed, masked_m
         )
         actual = hybrid_block_sparse_grouped_masked_wgmma_tma(
-            activation, packed, masked_m
+            activation, packed, masked_m, expected_m=17
         )
 
         torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)

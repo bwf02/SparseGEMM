@@ -155,7 +155,11 @@ def benchmark_masked(
     deepgemm_out = torch.empty_like(hybrid_out)
 
     hybrid_fn = lambda: hybrid_block_sparse_grouped_masked_wgmma_tma(
-        a, packed_weight, masked_m, out=hybrid_out
+        a,
+        packed_weight,
+        masked_m,
+        out=hybrid_out,
+        expected_m=tokens_per_expert,
     )
     deepgemm_fn = lambda: deep_gemm.m_grouped_bf16_gemm_nt_masked(
         a, dense_weight, deepgemm_out, masked_m, tokens_per_expert

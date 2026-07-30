@@ -3698,22 +3698,31 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         const torch::Tensor& hardware_metadata,
         const torch::Tensor& masked_m,
         const torch::Tensor& d,
+        const int& expected_m,
         const int& block_n,
         const int& block_m) {
     const auto [num_experts, max_m, k] = get_shape<3>(a);
     const auto [num_experts_, max_m_, n] = get_shape<3>(d);
     DG_HOST_ASSERT(num_experts == num_experts_ and max_m == max_m_);
     DG_HOST_ASSERT(max_m > 0 and max_m % 64 == 0);
+    DG_HOST_ASSERT(expected_m > 0 and expected_m <= max_m);
     check_hybrid_grouped_lane_ready_common(
         a, block_selector, dense_values, sparse_values, sparse_metadata,
         hardware_metadata, masked_m, d, block_n, block_m,
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and max_m == 64) {
         if (n == 1408 and k == 2048) {
-            sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4_adaptive(
-                a, block_selector, dense_values, sparse_values,
-                hardware_metadata, masked_m, d, num_experts, max_m,
-                n, k, block_n, block_m);
+            if (expected_m <= 32) {
+                sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4_adaptive(
+                    a, block_selector, dense_values, sparse_values,
+                    hardware_metadata, masked_m, d, num_experts, max_m,
+                    n, k, block_n, block_m);
+            } else {
+                sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2_masked_epilogue(
+                    a, block_selector, dense_values, sparse_values,
+                    hardware_metadata, masked_m, d, num_experts, max_m,
+                    n, k, block_n, block_m);
+            }
         } else if (n == 2048 and k == 1408) {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output64x128_nm12_stage2_single_wg(
                 a, block_selector, dense_values, sparse_values,
@@ -4493,6 +4502,7 @@ static void register_apis(pybind11::module_& m) {
         pybind11::arg("sparse_metadata"),
         pybind11::arg("masked_m"),
         pybind11::arg("d"),
+        pybind11::arg("expected_m"),
         pybind11::arg("block_n"),
         pybind11::arg("block_m"));
     m.def(
