@@ -3748,7 +3748,7 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
                 hardware_metadata, masked_m, d, num_experts, max_m,
                 n, k, block_n, block_m);
         } else if (max_m == 256 && n == 1408 && k == 2048) {
-            sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_stage4_pingpong_accum(
+            sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_stage4_full_tile_epilogue(
                 a, block_selector, dense_values, sparse_values,
                 hardware_metadata, masked_m, d, num_experts, max_m,
                 n, k, block_n, block_m);
