@@ -3715,7 +3715,7 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and max_m == 64) {
         if (n == 1408 and k == 2048) {
-            if (expected_m <= 32) {
+            if (expected_m <= 64) {
                 sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4_adaptive(
                     a, block_selector, dense_values, sparse_values,
                     hardware_metadata, masked_m, d, num_experts, max_m,
