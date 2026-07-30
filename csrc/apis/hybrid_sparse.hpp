@@ -4502,7 +4502,6 @@ static void register_apis(pybind11::module_& m) {
         pybind11::arg("sparse_metadata"),
         pybind11::arg("masked_m"),
         pybind11::arg("d"),
-        pybind11::arg("expected_m"),
         pybind11::arg("block_n"),
         pybind11::arg("block_m"));
     m.def(
@@ -4530,6 +4529,7 @@ static void register_apis(pybind11::module_& m) {
         pybind11::arg("hardware_metadata"),
         pybind11::arg("masked_m"),
         pybind11::arg("d"),
+        pybind11::arg("expected_m"),
         pybind11::arg("block_n"),
         pybind11::arg("block_m"));
 }
