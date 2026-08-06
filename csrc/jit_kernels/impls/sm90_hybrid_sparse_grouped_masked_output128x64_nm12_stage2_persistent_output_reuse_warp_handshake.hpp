@@ -21,6 +21,7 @@ public:
         int k;
         int block_n;
         int block_m;
+        int dispatch_mode;
         LaunchArgs launch_args;
     };
 
@@ -46,7 +47,8 @@ static void __instantiate_kernel() {{
             args.grouped_index, args.tensor_map_activation,
             args.tensor_map_dense, args.tensor_map_sparse,
             args.tensor_map_output, args.num_experts, args.max_m,
-            args.n, args.k, args.block_n, args.block_m));
+            args.n, args.k, args.block_n, args.block_m,
+            args.dispatch_mode));
     }
 };
 
@@ -56,7 +58,7 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_stage
         const torch::Tensor& hardware_metadata,
         const torch::Tensor& grouped_index, const torch::Tensor& d,
         const int num_experts, const int max_m, const int n, const int k,
-        const int block_n, const int block_m) {
+        const int block_n, const int block_m, const int dispatch_mode = 0) {
     DG_HOST_ASSERT(block_n == 1 and block_m == 2);
     DG_HOST_ASSERT(max_m % 128 == 0);
     constexpr int num_stages = 2;
@@ -104,6 +106,7 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_stage
             .k = k,
             .block_n = block_n,
             .block_m = block_m,
+            .dispatch_mode = dispatch_mode,
             .launch_args = LaunchArgs(
                 std::min(total_tiles, 2 * device_runtime->get_num_sms()),
                 256, smem_bytes),

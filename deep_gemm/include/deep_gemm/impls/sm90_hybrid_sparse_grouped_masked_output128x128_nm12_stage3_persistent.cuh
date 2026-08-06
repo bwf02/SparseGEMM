@@ -134,7 +134,7 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
         const __grid_constant__ cute::TmaDescriptor tensor_map_sparse,
         const __grid_constant__ cute::TmaDescriptor tensor_map_output,
         const int num_experts, const int max_m, const int n, const int k,
-        const int block_n, const int block_m) {
+        const int block_n, const int block_m, const int dispatch_mode) {
     static_assert(kBlockN == 1 && kBlockM == 2);
     static_assert(kPipelineStages == 3);
     static_assert(kNumExperts > 0 && kMaxM % 128 == 0);
@@ -143,6 +143,20 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
         num_experts != kNumExperts || max_m != kMaxM ||
         n != kN || k != kK)
         return;
+    if (dispatch_mode != 0) {
+        const int lane_id = static_cast<int>(threadIdx.x) & 31;
+        int local_max_m = 0;
+        for (int expert = lane_id; expert < kNumExperts; expert += 32)
+            local_max_m = max(local_max_m, grouped_index[expert]);
+#pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1)
+            local_max_m = max(
+                local_max_m,
+                __shfl_down_sync(0xffffffff, local_max_m, offset));
+        local_max_m = __shfl_sync(0xffffffff, local_max_m, 0);
+        if ((dispatch_mode > 0) != (local_max_m > 128))
+            return;
+    }
     constexpr int kDenseCount = kBlockM - kBlockN;
     constexpr int kWeightRows = 2;
     constexpr int kDenseRowBytes =

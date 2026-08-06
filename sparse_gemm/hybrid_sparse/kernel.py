@@ -1890,10 +1890,10 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
 ) -> torch.Tensor:
     """Run fused WGMMA/TMA grouped GEMM with per-expert valid M counts.
 
-    ``expected_m`` is a performance-only dispatch hint. SGLang supplies the
-    current EP rank's maximum value from ``masked_m`` for large prefill
-    batches. It defaults to the masked activation capacity and does not
-    constrain the values in ``masked_m``.
+    ``expected_m`` is a performance-only dispatch hint for fixed-capacity
+    kernels. Large prefill kernels select their N tile on the device from the
+    current rank's ``masked_m`` values. The hint defaults to the masked
+    activation capacity and does not constrain values in ``masked_m``.
     """
     experts, n, _ = _validate_grouped_inputs(a, packed_weight, masked_m, 3)
     metadata = _require_grouped_hardware_metadata(a, packed_weight)
