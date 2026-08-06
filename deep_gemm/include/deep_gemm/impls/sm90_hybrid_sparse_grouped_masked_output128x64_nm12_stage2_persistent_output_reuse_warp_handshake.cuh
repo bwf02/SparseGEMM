@@ -162,10 +162,14 @@ void hybrid_sparse_grouped_masked_output128x64_nm12_stage2_persistent_output_reu
     const int warp_in_math_wg = warp & 3;
     const int thread_in_metadata_group = lane & 3;
     constexpr int block_groups = kK / (kBlock * kBlockM);
+    constexpr int tiles_per_expert =
+        kMaxM /
+        kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake;
+    constexpr int tiles_m = kNumExperts * tiles_per_expert;
     constexpr int tiles_n =
         (kN + kOutputTileNProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake - 1) /
         kOutputTileNProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake;
-    constexpr int expert_n_tiles = kNumExperts * tiles_n;
+    constexpr int total_tiles = tiles_m * tiles_n;
 
     extern __shared__ __align__(1024) unsigned char smem[];
     auto stage_base = [&](const int stage) { return smem + stage * kStageBytes; };
@@ -230,330 +234,336 @@ void hybrid_sparse_grouped_masked_output128x64_nm12_stage2_persistent_output_reu
     unsigned producer_phase = 0;
     int consumer_stage = 0;
     unsigned consumer_phase = 0;
-    for (int expert_n_tile = static_cast<int>(blockIdx.x);
-         expert_n_tile < expert_n_tiles;
-         expert_n_tile += static_cast<int>(gridDim.x)) {
-        const int expert = expert_n_tile % kNumExperts;
-        const int tile_n = expert_n_tile / kNumExperts;
+    for (int tile_idx = static_cast<int>(blockIdx.x);
+         tile_idx < total_tiles;
+         tile_idx += static_cast<int>(gridDim.x)) {
+        const int tile_m = tile_idx % tiles_m;
+        const int tile_n = tile_idx / tiles_m;
+        const int expert = tile_m / tiles_per_expert;
+        const int local_tile_m = tile_m % tiles_per_expert;
+        const int local_m =
+            local_tile_m *
+            kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake;
+        const int output_tile_m =
+            expert * kMaxM + local_m;
         const int output_tile_n =
             tile_n * kOutputTileNProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake;
         const int block_row = tile_n;
-        const int expert_rows = grouped_index[expert] < kMaxM
-            ? grouped_index[expert]
-            : kMaxM;
-        for (int local_m = 0; local_m < expert_rows;
-             local_m +=
-                 kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake) {
-            const int output_tile_m = expert * kMaxM + local_m;
-            const int remaining = expert_rows - local_m;
-            const int valid_rows = remaining < 128 ? remaining : 128;
+        const int remaining = grouped_index[expert] - local_m;
+        const int valid_rows = remaining <= 0
+            ? 0
+            : (remaining < 128 ? remaining : 128);
 
-            if (warp == 6) {
-                const bool is_leader = cute::elect_one_sync();
+        // Match DeepGEMM's masked semantics: rows beyond grouped_index are
+        // unspecified, so empty tiles do not issue TMA, WGMMA, or output stores.
+        if (valid_rows == 0)
+            continue;
+
+        if (warp == 6) {
+            const bool is_leader = cute::elect_one_sync();
 #pragma unroll
-                for (int block_group = 0; block_group < block_groups;
-                     ++block_group) {
-                    if (is_leader)
-                        empty_barrier[producer_stage].wait(
-                            producer_phase ^ 1);
-                    __syncwarp();
-                    const long long selector_index =
-                        (static_cast<long long>(expert) * (kN / kBlock) +
-                         block_row) * block_groups + block_group;
-                    const unsigned long long selector =
-                        static_cast<unsigned long long>(
-                            block_selector[selector_index]);
-                    if (is_leader)
-                        stage_control[producer_stage] = selector;
+            for (int block_group = 0; block_group < block_groups;
+                 ++block_group) {
+                if (is_leader)
+                    empty_barrier[producer_stage].wait(
+                        producer_phase ^ 1);
+                __syncwarp();
+                const long long selector_index =
+                    (static_cast<long long>(expert) * (kN / kBlock) +
+                     block_row) * block_groups + block_group;
+                const unsigned long long selector =
+                    static_cast<unsigned long long>(
+                        block_selector[selector_index]);
+                if (is_leader)
+                    stage_control[producer_stage] = selector;
 #pragma unroll
-                    for (int dense_slot = 0; dense_slot < kDenseCount;
-                         ++dense_slot) {
-                        const long long packed_block =
-                            selector_index * kDenseCount + dense_slot;
-                        if (is_leader) {
-                            deep_gemm::tma::copy<
-                                64, 64, 128, cutlass::bfloat16_t>(
-                                &tensor_map_dense,
-                                &full_barrier[producer_stage],
-                                reinterpret_cast<cutlass::bfloat16_t*>(
-                                    smem_dense(producer_stage) +
-                                    dense_slot * kBlock * kBlock),
-                                0, packed_block * kBlock);
-                        }
-                    }
-#pragma unroll
-                    for (int sparse_slot = 0; sparse_slot < kBlockN;
-                         ++sparse_slot) {
-                        const long long packed_block =
-                            selector_index * kBlockN + sparse_slot;
-                        if (is_leader) {
-                            deep_gemm::tma::copy<
-                                32, 64, 64, cutlass::bfloat16_t>(
-                                &tensor_map_sparse,
-                                &full_barrier[producer_stage],
-                                reinterpret_cast<cutlass::bfloat16_t*>(
-                                    smem_sparse(producer_stage) +
-                                    sparse_slot * kBlock * (kBlock / 2)),
-                                0, packed_block * kBlock);
-                        }
-                        reinterpret_cast<uint4*>(
-                            smem_metadata(producer_stage) +
-                            sparse_slot * 128)[lane] =
-                            reinterpret_cast<const uint4*>(
-                                hardware_metadata +
-                                static_cast<long long>(packed_block) *
-                                    128)[lane];
-                    }
-                    __syncwarp();
+                for (int dense_slot = 0; dense_slot < kDenseCount;
+                     ++dense_slot) {
+                    const long long packed_block =
+                        selector_index * kDenseCount + dense_slot;
                     if (is_leader) {
                         deep_gemm::tma::copy<
-                            kBlock * kBlockM,
-                            kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake, 128,
-                            cutlass::bfloat16_t>(
-                            &tensor_map_activation,
+                            64, 64, 128, cutlass::bfloat16_t>(
+                            &tensor_map_dense,
                             &full_barrier[producer_stage],
                             reinterpret_cast<cutlass::bfloat16_t*>(
-                                smem_activation(producer_stage)),
-                            block_group * kBlock * kBlockM,
-                            output_tile_m);
-                        full_barrier[producer_stage].arrive_and_expect_tx(
-                            kDenseWeightBytes + kSparseWeightBytes +
-                            kActivationBytes);
+                                smem_dense(producer_stage) +
+                                dense_slot * kBlock * kBlock),
+                            0, packed_block * kBlock);
                     }
-                    advance_pipeline_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake<kPipelineStages>(
-                        producer_stage, producer_phase);
                 }
+#pragma unroll
+                for (int sparse_slot = 0; sparse_slot < kBlockN;
+                     ++sparse_slot) {
+                    const long long packed_block =
+                        selector_index * kBlockN + sparse_slot;
+                    if (is_leader) {
+                        deep_gemm::tma::copy<
+                            32, 64, 64, cutlass::bfloat16_t>(
+                            &tensor_map_sparse,
+                            &full_barrier[producer_stage],
+                            reinterpret_cast<cutlass::bfloat16_t*>(
+                                smem_sparse(producer_stage) +
+                                sparse_slot * kBlock * (kBlock / 2)),
+                            0, packed_block * kBlock);
+                    }
+                    reinterpret_cast<uint4*>(
+                        smem_metadata(producer_stage) +
+                        sparse_slot * 128)[lane] =
+                        reinterpret_cast<const uint4*>(
+                            hardware_metadata +
+                            static_cast<long long>(packed_block) *
+                                128)[lane];
+                }
+                __syncwarp();
+                if (is_leader) {
+                    deep_gemm::tma::copy<
+                        kBlock * kBlockM,
+                        kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake, 128,
+                        cutlass::bfloat16_t>(
+                        &tensor_map_activation,
+                        &full_barrier[producer_stage],
+                        reinterpret_cast<cutlass::bfloat16_t*>(
+                            smem_activation(producer_stage)),
+                        block_group * kBlock * kBlockM,
+                        output_tile_m);
+                    full_barrier[producer_stage].arrive_and_expect_tx(
+                        kDenseWeightBytes + kSparseWeightBytes +
+                        kActivationBytes);
+                }
+                advance_pipeline_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake<kPipelineStages>(
+                    producer_stage, producer_phase);
             }
+        }
 
-            if (warp < 4) {
-                float accumulator[kAccumulatorCountProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake] = {};
-                bool has_accumulator = false;
-                int pending_stage = -1;
+        if (warp < 4) {
+            float accumulator[kAccumulatorCountProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake] = {};
+            bool has_accumulator = false;
+            int pending_stage = -1;
 #pragma unroll
-                for (int block_group = 0; block_group < block_groups;
-                     ++block_group) {
-                    full_barrier[consumer_stage].wait(consumer_phase);
-                    const unsigned long long selector =
-                        stage_control[consumer_stage];
-                    const unsigned stage_desc_offset =
-                        consumer_stage * (kStageBytes / 16);
+            for (int block_group = 0; block_group < block_groups;
+                 ++block_group) {
+                full_barrier[consumer_stage].wait(consumer_phase);
+                const unsigned long long selector =
+                    stage_control[consumer_stage];
+                const unsigned stage_desc_offset =
+                    consumer_stage * (kStageBytes / 16);
 #pragma unroll
-                    for (int i = 0;
-                         i < kAccumulatorCountProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake; ++i)
-                        deep_gemm::ptx::warpgroup_fence_operand(
-                            accumulator[i]);
-                    deep_gemm::ptx::warpgroup_arrive();
-                    if constexpr (kBlockN == 1 && kBlockM == 2) {
-                        const int sparse_local_block =
-                            (selector & 1ULL) != 0 ? 0 : 1;
-                        const int dense_local_block = 1 - sparse_local_block;
-                        const int active_lane =
-                            (lane >> 2) * 2 + thread_in_metadata_group;
-                        unsigned metadata_0 = 0;
-                        unsigned metadata_1 = 0;
-                        if (thread_in_metadata_group < 2) {
-                            metadata_0 = smem_metadata(consumer_stage)[
-                                warp_in_math_wg * 16 + active_lane];
-                            metadata_1 = smem_metadata(consumer_stage)[
-                                (4 + warp_in_math_wg) * 16 + active_lane];
+                for (int i = 0;
+                     i < kAccumulatorCountProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake; ++i)
+                    deep_gemm::ptx::warpgroup_fence_operand(
+                        accumulator[i]);
+                deep_gemm::ptx::warpgroup_arrive();
+                if constexpr (kBlockN == 1 && kBlockM == 2) {
+                    const int sparse_local_block =
+                        (selector & 1ULL) != 0 ? 0 : 1;
+                    const int dense_local_block = 1 - sparse_local_block;
+                    const int active_lane =
+                        (lane >> 2) * 2 + thread_in_metadata_group;
+                    unsigned metadata_0 = 0;
+                    unsigned metadata_1 = 0;
+                    if (thread_in_metadata_group < 2) {
+                        metadata_0 = smem_metadata(consumer_stage)[
+                            warp_in_math_wg * 16 + active_lane];
+                        metadata_1 = smem_metadata(consumer_stage)[
+                            (4 + warp_in_math_wg) * 16 + active_lane];
+                    }
+                    auto sparse_desc_0 = sparse_desc;
+                    auto sparse_desc_1 = sparse_desc;
+                    auto sparse_activation_desc_0 = activation_desc;
+                    auto sparse_activation_desc_1 = activation_desc;
+                    sparse_desc_0.reg32_[0] =
+                        sparse_desc_base_lo + stage_desc_offset;
+                    sparse_desc_1.reg32_[0] =
+                        sparse_desc_base_lo + stage_desc_offset + 2;
+                    const unsigned sparse_activation_base =
+                        activation_desc_base_lo + stage_desc_offset +
+                        sparse_local_block *
+                            kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
+                            kBlock / 8;
+                    sparse_activation_desc_0.reg32_[0] =
+                        sparse_activation_base;
+                    sparse_activation_desc_1.reg32_[0] =
+                        sparse_activation_base + 4;
+
+                    auto dense_desc_0 = dense_desc;
+                    auto dense_desc_1 = dense_desc;
+                    auto dense_desc_2 = dense_desc;
+                    auto dense_desc_3 = dense_desc;
+                    auto dense_activation_desc_0 = activation_desc;
+                    auto dense_activation_desc_1 = activation_desc;
+                    auto dense_activation_desc_2 = activation_desc;
+                    auto dense_activation_desc_3 = activation_desc;
+                    const unsigned dense_activation_base =
+                        activation_desc_base_lo + stage_desc_offset +
+                        dense_local_block *
+                            kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
+                            kBlock / 8;
+                    dense_desc_0.reg32_[0] =
+                        dense_desc_base_lo + stage_desc_offset;
+                    dense_desc_1.reg32_[0] =
+                        dense_desc_base_lo + stage_desc_offset + 2;
+                    dense_desc_2.reg32_[0] =
+                        dense_desc_base_lo + stage_desc_offset + 4;
+                    dense_desc_3.reg32_[0] =
+                        dense_desc_base_lo + stage_desc_offset + 6;
+                    dense_activation_desc_0.reg32_[0] =
+                        dense_activation_base;
+                    dense_activation_desc_1.reg32_[0] =
+                        dense_activation_base + 2;
+                    dense_activation_desc_2.reg32_[0] =
+                        dense_activation_base + 4;
+                    dense_activation_desc_3.reg32_[0] =
+                        dense_activation_base + 6;
+                    wgmma_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake(
+                        sparse_desc_0.desc_, sparse_activation_desc_0.desc_,
+                        metadata_0, sparse_desc_1.desc_,
+                        sparse_activation_desc_1.desc_, metadata_1,
+                        dense_desc_0.desc_, dense_activation_desc_0.desc_,
+                        dense_desc_1.desc_, dense_activation_desc_1.desc_,
+                        dense_desc_2.desc_, dense_activation_desc_2.desc_,
+                        dense_desc_3.desc_, dense_activation_desc_3.desc_,
+                        accumulator, has_accumulator);
+                } else {
+#pragma unroll
+                for (int local_block = 0; local_block < kBlockM;
+                     ++local_block) {
+                    const bool is_sparse =
+                        static_cast<bool>(
+                            (selector >> local_block) & 1ULL);
+                    const unsigned long long lower_mask =
+                        (1ULL << local_block) - 1ULL;
+                    const int sparse_slot =
+                        __popcll(selector & lower_mask);
+                    const int dense_slot = local_block - sparse_slot;
+                    if (is_sparse) {
+#pragma unroll
+                        for (int k_tile = 0; k_tile < 2; ++k_tile) {
+                            unsigned metadata = 0;
+                            if (thread_in_metadata_group < 2) {
+                                const int active_lane =
+                                    (lane >> 2) * 2 +
+                                    thread_in_metadata_group;
+                                metadata = smem_metadata(consumer_stage)[
+                                    sparse_slot * 128 +
+                                    (k_tile * 4 + warp_in_math_wg) * 16 +
+                                    active_lane];
+                            }
+                            const auto desc_a =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_sparse(consumer_stage) +
+                                        sparse_slot * kBlock *
+                                            (kBlock / 2) +
+                                        k_tile * 16,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B64),
+                                    0, 512);
+                            const auto desc_b =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_activation(consumer_stage) +
+                                        local_block *
+                                            kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
+                                            kBlock +
+                                        k_tile * 32,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B128),
+                                    0, 1024);
+                            sparse_wgmma_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake(
+                                desc_a.desc_, desc_b.desc_, accumulator,
+                                metadata,
+                                has_accumulator || local_block != 0 ||
+                                    k_tile != 0);
                         }
-                        auto sparse_desc_0 = sparse_desc;
-                        auto sparse_desc_1 = sparse_desc;
-                        auto sparse_activation_desc_0 = activation_desc;
-                        auto sparse_activation_desc_1 = activation_desc;
-                        sparse_desc_0.reg32_[0] =
-                            sparse_desc_base_lo + stage_desc_offset;
-                        sparse_desc_1.reg32_[0] =
-                            sparse_desc_base_lo + stage_desc_offset + 2;
-                        const unsigned sparse_activation_base =
-                            activation_desc_base_lo + stage_desc_offset +
-                            sparse_local_block *
-                                kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
-                                kBlock / 8;
-                        sparse_activation_desc_0.reg32_[0] =
-                            sparse_activation_base;
-                        sparse_activation_desc_1.reg32_[0] =
-                            sparse_activation_base + 4;
-
-                        auto dense_desc_0 = dense_desc;
-                        auto dense_desc_1 = dense_desc;
-                        auto dense_desc_2 = dense_desc;
-                        auto dense_desc_3 = dense_desc;
-                        auto dense_activation_desc_0 = activation_desc;
-                        auto dense_activation_desc_1 = activation_desc;
-                        auto dense_activation_desc_2 = activation_desc;
-                        auto dense_activation_desc_3 = activation_desc;
-                        const unsigned dense_activation_base =
-                            activation_desc_base_lo + stage_desc_offset +
-                            dense_local_block *
-                                kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
-                                kBlock / 8;
-                        dense_desc_0.reg32_[0] =
-                            dense_desc_base_lo + stage_desc_offset;
-                        dense_desc_1.reg32_[0] =
-                            dense_desc_base_lo + stage_desc_offset + 2;
-                        dense_desc_2.reg32_[0] =
-                            dense_desc_base_lo + stage_desc_offset + 4;
-                        dense_desc_3.reg32_[0] =
-                            dense_desc_base_lo + stage_desc_offset + 6;
-                        dense_activation_desc_0.reg32_[0] =
-                            dense_activation_base;
-                        dense_activation_desc_1.reg32_[0] =
-                            dense_activation_base + 2;
-                        dense_activation_desc_2.reg32_[0] =
-                            dense_activation_base + 4;
-                        dense_activation_desc_3.reg32_[0] =
-                            dense_activation_base + 6;
-                        wgmma_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake(
-                            sparse_desc_0.desc_, sparse_activation_desc_0.desc_,
-                            metadata_0, sparse_desc_1.desc_,
-                            sparse_activation_desc_1.desc_, metadata_1,
-                            dense_desc_0.desc_, dense_activation_desc_0.desc_,
-                            dense_desc_1.desc_, dense_activation_desc_1.desc_,
-                            dense_desc_2.desc_, dense_activation_desc_2.desc_,
-                            dense_desc_3.desc_, dense_activation_desc_3.desc_,
-                            accumulator, has_accumulator);
                     } else {
 #pragma unroll
-                    for (int local_block = 0; local_block < kBlockM;
-                         ++local_block) {
-                        const bool is_sparse =
-                            static_cast<bool>(
-                                (selector >> local_block) & 1ULL);
-                        const unsigned long long lower_mask =
-                            (1ULL << local_block) - 1ULL;
-                        const int sparse_slot =
-                            __popcll(selector & lower_mask);
-                        const int dense_slot = local_block - sparse_slot;
-                        if (is_sparse) {
-#pragma unroll
-                            for (int k_tile = 0; k_tile < 2; ++k_tile) {
-                                unsigned metadata = 0;
-                                if (thread_in_metadata_group < 2) {
-                                    const int active_lane =
-                                        (lane >> 2) * 2 +
-                                        thread_in_metadata_group;
-                                    metadata = smem_metadata(consumer_stage)[
-                                        sparse_slot * 128 +
-                                        (k_tile * 4 + warp_in_math_wg) * 16 +
-                                        active_lane];
-                                }
-                                const auto desc_a =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_sparse(consumer_stage) +
-                                            sparse_slot * kBlock *
-                                                (kBlock / 2) +
-                                            k_tile * 16,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B64),
-                                        0, 512);
-                                const auto desc_b =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_activation(consumer_stage) +
-                                            local_block *
-                                                kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
-                                                kBlock +
-                                            k_tile * 32,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B128),
-                                        0, 1024);
-                                sparse_wgmma_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake(
-                                    desc_a.desc_, desc_b.desc_, accumulator,
-                                    metadata,
-                                    has_accumulator || local_block != 0 ||
-                                        k_tile != 0);
-                            }
-                        } else {
-#pragma unroll
-                            for (int k_tile = 0; k_tile < 4; ++k_tile) {
-                                const auto desc_a =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_dense(consumer_stage) +
-                                            dense_slot * kBlock * kBlock +
-                                            k_tile * 16,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B128),
-                                        0, 1024);
-                                const auto desc_b =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_activation(consumer_stage) +
-                                            local_block *
-                                                kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
-                                                kBlock +
-                                            k_tile * 16,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B128),
-                                        0, 1024);
-                                DenseMMAProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake::wgmma(
-                                    desc_a.desc_, desc_b.desc_, accumulator,
-                                    has_accumulator || local_block != 0 ||
-                                        k_tile != 0);
-                            }
+                        for (int k_tile = 0; k_tile < 4; ++k_tile) {
+                            const auto desc_a =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_dense(consumer_stage) +
+                                        dense_slot * kBlock * kBlock +
+                                        k_tile * 16,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B128),
+                                    0, 1024);
+                            const auto desc_b =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_activation(consumer_stage) +
+                                        local_block *
+                                            kOutputTileMProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake *
+                                            kBlock +
+                                        k_tile * 16,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B128),
+                                    0, 1024);
+                            DenseMMAProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake::wgmma(
+                                desc_a.desc_, desc_b.desc_, accumulator,
+                                has_accumulator || local_block != 0 ||
+                                    k_tile != 0);
                         }
                     }
-                    }
-                    deep_gemm::ptx::warpgroup_commit_batch();
-#pragma unroll
-                    for (int i = 0;
-                         i < kAccumulatorCountProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake; ++i)
-                        deep_gemm::ptx::warpgroup_fence_operand(
-                            accumulator[i]);
-                    if (pending_stage >= 0) {
-                        deep_gemm::ptx::warpgroup_wait<1>();
-                        release_stage(&empty_barrier[pending_stage]);
-                    }
-                    pending_stage = consumer_stage;
-                    has_accumulator = true;
-                    advance_pipeline_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake<kPipelineStages>(
-                        consumer_stage, consumer_phase);
                 }
-                deep_gemm::ptx::warpgroup_wait<0>();
-                release_stage(&empty_barrier[pending_stage]);
+                }
+                deep_gemm::ptx::warpgroup_commit_batch();
+#pragma unroll
+                for (int i = 0;
+                     i < kAccumulatorCountProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake; ++i)
+                    deep_gemm::ptx::warpgroup_fence_operand(
+                        accumulator[i]);
+                if (pending_stage >= 0) {
+                    deep_gemm::ptx::warpgroup_wait<1>();
+                    release_stage(&empty_barrier[pending_stage]);
+                }
+                pending_stage = consumer_stage;
+                has_accumulator = true;
+                advance_pipeline_group_stage_128x64_nm12_desc_reuse_fused_mma_group_fixed_shape_unroll_k_stage2_persistent_output_reuse_warp_handshake<kPipelineStages>(
+                    consumer_stage, consumer_phase);
+            }
+            deep_gemm::ptx::warpgroup_wait<0>();
+            release_stage(&empty_barrier[pending_stage]);
 
 #pragma unroll
-                for (int atom = 0; atom < 16; ++atom) {
-                    const auto bf16_0 = __float22bfloat162_rn(
-                        {accumulator[atom * 4],
-                         accumulator[atom * 4 + 1]});
-                    const auto bf16_1 = __float22bfloat162_rn(
-                        {accumulator[atom * 4 + 2],
-                         accumulator[atom * 4 + 3]});
-                    const int row = lane & 7;
-                    const int col = warp_in_math_wg * 2 + lane / 8;
-                    auto* smem_ptr =
-                        smem_output + (atom * 8 + row) * kBlock +
-                        ((col ^ row) * 8);
-                    deep_gemm::ptx::SM90_U32x2_STSM_T<
-                        __nv_bfloat162>::copy(
-                        bf16_0, bf16_1, smem_ptr);
-                }
-                cute::tma_store_fence();
-                cutlass::arch::NamedBarrier::sync(
-                    kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake, 0);
-                for (int index = static_cast<int>(threadIdx.x);
-                     index < (128 - valid_rows) * 64;
-                     index += kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake) {
-                    const int row = valid_rows + index / 64;
-                    const int col = index % 64;
-                    const int physical_col =
-                        ((col / 8) ^ (row & 7)) * 8 + col % 8;
-                    smem_output[row * 64 + physical_col] =
-                        __float2bfloat16(0.0f);
-                }
-                cutlass::arch::NamedBarrier::sync(
-                    kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake, 0);
-                if (warp == 0 && cute::elect_one_sync()) {
-                    cute::SM90_TMA_STORE_2D::copy(
-                        &tensor_map_output, smem_output,
-                        output_tile_n, output_tile_m);
-                    cute::tma_store_arrive();
-                    cute::tma_store_wait<0>();
-                }
+            for (int atom = 0; atom < 16; ++atom) {
+                const auto bf16_0 = __float22bfloat162_rn(
+                    {accumulator[atom * 4],
+                     accumulator[atom * 4 + 1]});
+                const auto bf16_1 = __float22bfloat162_rn(
+                    {accumulator[atom * 4 + 2],
+                     accumulator[atom * 4 + 3]});
+                const int row = lane & 7;
+                const int col = warp_in_math_wg * 2 + lane / 8;
+                auto* smem_ptr =
+                    smem_output + (atom * 8 + row) * kBlock +
+                    ((col ^ row) * 8);
+                deep_gemm::ptx::SM90_U32x2_STSM_T<
+                    __nv_bfloat162>::copy(
+                    bf16_0, bf16_1, smem_ptr);
             }
-            // Only the TMA-store warp and producer need to protect stage 0 across
-            // persistent tiles. The remaining math warps can advance immediately.
-            if (warp == 0 || warp == 6)
-                cutlass::arch::NamedBarrier::sync(64, 1);
+            cute::tma_store_fence();
+            cutlass::arch::NamedBarrier::sync(
+                kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake, 0);
+            for (int index = static_cast<int>(threadIdx.x);
+                 index < (128 - valid_rows) * 64;
+                 index += kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake) {
+                const int row = valid_rows + index / 64;
+                const int col = index % 64;
+                const int physical_col =
+                    ((col / 8) ^ (row & 7)) * 8 + col % 8;
+                smem_output[row * 64 + physical_col] =
+                    __float2bfloat16(0.0f);
+            }
+            cutlass::arch::NamedBarrier::sync(
+                kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage2PersistentOutputReuseWarpHandshake, 0);
+            if (warp == 0 && cute::elect_one_sync()) {
+                cute::SM90_TMA_STORE_2D::copy(
+                    &tensor_map_output, smem_output,
+                    output_tile_n, output_tile_m);
+                cute::tma_store_arrive();
+                cute::tma_store_wait<0>();
+            }
         }
+        // Only the TMA-store warp and producer need to protect stage 0 across
+        // persistent tiles. The remaining math warps can advance immediately.
+        if (warp == 0 || warp == 6)
+            cutlass::arch::NamedBarrier::sync(64, 1);
     }
 }
