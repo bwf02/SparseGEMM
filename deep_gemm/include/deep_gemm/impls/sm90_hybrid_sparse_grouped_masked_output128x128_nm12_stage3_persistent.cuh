@@ -137,7 +137,7 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
         const int block_n, const int block_m) {
     static_assert(kBlockN == 1 && kBlockM == 2);
     static_assert(kPipelineStages == 3);
-    static_assert(kNumExperts > 0 && kMaxM == 128);
+    static_assert(kNumExperts > 0 && kMaxM % 128 == 0);
     static_assert(kN % 128 == 0 && kK % 128 == 0);
     if (block_n != kBlockN || block_m != kBlockM ||
         num_experts != kNumExperts || max_m != kMaxM ||
@@ -266,6 +266,11 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
         const int valid_rows = remaining <= 0
             ? 0
             : (remaining < 128 ? remaining : 128);
+
+        // Masked output rows are unspecified, so empty capacity tiles can be
+        // omitted without issuing TMA, WGMMA, or output stores.
+        if (valid_rows == 0)
+            continue;
 
         if (warp == 10) {
             const bool is_leader = cute::elect_one_sync();

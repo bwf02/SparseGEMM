@@ -58,7 +58,7 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output128x128_nm12_stag
         const int num_experts, const int max_m, const int n, const int k,
         const int block_n, const int block_m) {
     DG_HOST_ASSERT(block_n == 1 and block_m == 2);
-    DG_HOST_ASSERT(max_m == 128 and n % 128 == 0);
+    DG_HOST_ASSERT(max_m % 128 == 0 and n % 128 == 0);
     constexpr int num_stages = 3;
     constexpr int output_bytes = 128 * 128 * sizeof(__nv_bfloat16);
     const int block_rows = n / 64;
