@@ -1416,6 +1416,41 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             actual[2, :129], expected[2, :129], rtol=1e-2, atol=1e-2
         )
 
+    def test_grouped_masked_wgmma_tma_stage2_skips_empty_tiles(self):
+        torch.manual_seed(408)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(
+            3, 128, 256, device="cuda", dtype=torch.bfloat16
+        )
+        masks = torch.stack(
+            [
+                make_mask(weight[0], layout, (0,)),
+                make_mask(weight[1], layout, (1,)),
+                make_mask(weight[2], layout, (0,)),
+            ]
+        )
+        packed = dense_to_hybrid_block_sparse(weight, masks, layout)
+        activation = torch.randn(
+            3, 384, 256, device="cuda", dtype=torch.bfloat16
+        )
+        masked_m = torch.tensor(
+            [0, 17, 257], device="cuda", dtype=torch.int32
+        )
+
+        expected = hybrid_block_sparse_grouped_masked_ref(
+            activation, packed, masked_m
+        )
+        actual = hybrid_block_sparse_grouped_masked_wgmma_tma(
+            activation, packed, masked_m, expected_m=17
+        )
+
+        torch.testing.assert_close(
+            actual[1, :17], expected[1, :17], rtol=1e-2, atol=1e-2
+        )
+        torch.testing.assert_close(
+            actual[2, :257], expected[2, :257], rtol=1e-2, atol=1e-2
+        )
+
     def test_grouped_wgmma_tma_requires_aligned_m_layout(self):
         layout = HybridBlockSparseLayout(64, 64, 1, 2)
         weight = torch.randn(1, 64, 128, device="cuda", dtype=torch.bfloat16)

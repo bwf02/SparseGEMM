@@ -254,6 +254,11 @@ void hybrid_sparse_grouped_masked_output128x64_nm12_stage2_persistent_output_reu
             ? 0
             : (remaining < 128 ? remaining : 128);
 
+        // Match DeepGEMM's masked semantics: rows beyond grouped_index are
+        // unspecified, so empty tiles do not issue TMA, WGMMA, or output stores.
+        if (valid_rows == 0)
+            continue;
+
         if (warp == 6) {
             const bool is_leader = cute::elect_one_sync();
 #pragma unroll
