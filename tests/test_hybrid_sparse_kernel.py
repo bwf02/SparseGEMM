@@ -1317,7 +1317,7 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         self.assertEqual(torch.count_nonzero(actual[0]).item(), 0)
         self.assertEqual(torch.count_nonzero(actual[1, 4:]).item(), 0)
 
-    def test_grouped_masked_wgmma_tma_matches_reference_and_zeros_tail(self):
+    def test_grouped_masked_wgmma_tma_matches_reference(self):
         torch.manual_seed(405)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)
         weight = torch.randn(3, 128, 256, device="cuda", dtype=torch.bfloat16)
@@ -1339,9 +1339,12 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             activation, packed, masked_m, expected_m=17
         )
 
-        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
-        self.assertEqual(torch.count_nonzero(actual[0]).item(), 0)
-        self.assertEqual(torch.count_nonzero(actual[1, 17:]).item(), 0)
+        torch.testing.assert_close(
+            actual[1, :17], expected[1, :17], rtol=1e-2, atol=1e-2
+        )
+        torch.testing.assert_close(
+            actual[2, :64], expected[2, :64], rtol=1e-2, atol=1e-2
+        )
 
     def test_grouped_masked_wgmma_tma_output128_matches_reference(self):
         torch.manual_seed(406)
@@ -1371,9 +1374,12 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             activation, packed, masked_m
         )
 
-        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
-        self.assertEqual(torch.count_nonzero(actual[0]).item(), 0)
-        self.assertEqual(torch.count_nonzero(actual[1, 65:]).item(), 0)
+        torch.testing.assert_close(
+            actual[1, :65], expected[1, :65], rtol=1e-2, atol=1e-2
+        )
+        torch.testing.assert_close(
+            actual[2, :128], expected[2, :128], rtol=1e-2, atol=1e-2
+        )
 
     def test_grouped_masked_wgmma_tma_persistent_skips_empty_tiles(self):
         torch.manual_seed(407)
@@ -1403,10 +1409,12 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             activation, packed, masked_m, expected_m=17
         )
 
-        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
-        self.assertEqual(torch.count_nonzero(actual[0]).item(), 0)
-        self.assertEqual(torch.count_nonzero(actual[1, 17:]).item(), 0)
-        self.assertEqual(torch.count_nonzero(actual[2, 129:]).item(), 0)
+        torch.testing.assert_close(
+            actual[1, :17], expected[1, :17], rtol=1e-2, atol=1e-2
+        )
+        torch.testing.assert_close(
+            actual[2, :129], expected[2, :129], rtol=1e-2, atol=1e-2
+        )
 
     def test_grouped_wgmma_tma_requires_aligned_m_layout(self):
         layout = HybridBlockSparseLayout(64, 64, 1, 2)

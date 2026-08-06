@@ -260,36 +260,10 @@ void hybrid_sparse_grouped_masked_output128x64_nm12_persistent(
             ? 0
             : (remaining < 128 ? remaining : 128);
 
-        // Match DeepGEMM's masked scheduler semantics: empty tiles must not
-        // issue activation/weight TMA loads or WGMMA. Preserve this API's
-        // deterministic zero-tail contract with an output-only fast path.
-        if (valid_rows == 0) {
-            if (warp < 4) {
-                for (int index = static_cast<int>(threadIdx.x);
-                     index < 128 * 64;
-                     index += kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage4AsyncGroup2) {
-                    const int row = index / 64;
-                    const int col = index % 64;
-                    const int physical_col =
-                        ((col / 8) ^ (row & 7)) * 8 + col % 8;
-                    smem_output[row * 64 + physical_col] =
-                        __float2bfloat16(0.0f);
-                }
-                cute::tma_store_fence();
-                cutlass::arch::NamedBarrier::sync(
-                    kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage4AsyncGroup2, 0);
-                if (warp == 0 && cute::elect_one_sync()) {
-                    cute::SM90_TMA_STORE_2D::copy(
-                        &tensor_map_output, smem_output,
-                        output_tile_n, output_tile_m);
-                    cute::tma_store_arrive();
-                    cute::tma_store_wait<0>();
-                }
-                cutlass::arch::NamedBarrier::sync(
-                    kMathThreadsProducerMetadataGroupStage128x64NM12DescReuseFusedMMAGroupFixedShapeUnrollKStage4AsyncGroup2, 1);
-            }
+        // Match DeepGEMM's masked semantics: rows beyond grouped_index are
+        // unspecified, so empty tiles do not issue TMA, WGMMA, or output stores.
+        if (valid_rows == 0)
             continue;
-        }
 
         if (warp == 6) {
             const bool is_leader = cute::elect_one_sync();
