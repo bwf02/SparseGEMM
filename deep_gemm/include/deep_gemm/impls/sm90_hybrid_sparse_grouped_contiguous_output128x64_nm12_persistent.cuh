@@ -274,6 +274,11 @@ void hybrid_sparse_grouped_contiguous_output128x64_nm12_persistent(
             previous_end = end;
         }
 
+        // The activation allocation uses a synchronization-free worst-case
+        // capacity. Tiles beyond the final packed expert range carry no rows.
+        if (valid_rows == 0)
+            continue;
+
         if (warp == 6) {
             const bool is_leader = cute::elect_one_sync();
 #pragma unroll

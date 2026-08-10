@@ -3674,8 +3674,29 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         a, block_selector, dense_values, sparse_values, sparse_metadata,
         hardware_metadata, grouped_layout, d, block_n, block_m,
         num_experts, n, k);
-    if (block_n == 1 and block_m == 2 and m_alignment == 128 and
+    const bool use_output64x128_layout =
+        block_m == 2 and (block_n == 1 or block_n == 2);
+    if (use_output64x128_layout and
+        (m_alignment == 64 or m_alignment == 128) and
         total_m == 1024 and n % 128 == 0) {
+        sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
+            a, block_selector, dense_values, sparse_values,
+            hardware_metadata, grouped_layout, d, total_m, num_experts,
+            m_alignment, n, k, block_n, block_m);
+        return;
+    }
+    if (use_output64x128_layout and
+        (m_alignment == 64 or m_alignment == 128) and
+        total_m % 64 == 0 and (n == 1408 or n == 1536) and k == 2048) {
+        sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
+            a, block_selector, dense_values, sparse_values,
+            hardware_metadata, grouped_layout, d, total_m, num_experts,
+            m_alignment, n, k, block_n, block_m);
+        return;
+    }
+    if (use_output64x128_layout and
+        (m_alignment == 64 or m_alignment == 128) and
+        total_m % 64 == 0 and n == 2048 and (k == 640 or k == 768)) {
         sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, grouped_layout, d, total_m, num_experts,
@@ -3718,18 +3739,19 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         hardware_metadata, masked_m, d, block_n, block_m,
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and max_m == 64) {
-        if (n == 1408 and k == 2048) {
-            if (expected_m <= 32) {
-                sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4_adaptive(
-                    a, block_selector, dense_values, sparse_values,
-                    hardware_metadata, masked_m, d, num_experts, max_m,
-                    n, k, block_n, block_m);
-            } else {
-                sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2_masked_epilogue(
-                    a, block_selector, dense_values, sparse_values,
-                    hardware_metadata, masked_m, d, num_experts, max_m,
-                    n, k, block_n, block_m);
-            }
+        const bool use_tiny_m_adaptive = expected_m <= 32 and
+            ((n == 1408 and k == 2048) or
+             (n == 2048 and (k == 640 or k == 768)));
+        if (use_tiny_m_adaptive) {
+            sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4_adaptive(
+                a, block_selector, dense_values, sparse_values,
+                hardware_metadata, masked_m, d, num_experts, max_m,
+                n, k, block_n, block_m);
+        } else if (n == 1408 and k == 2048) {
+            sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2_masked_epilogue(
+                a, block_selector, dense_values, sparse_values,
+                hardware_metadata, masked_m, d, num_experts, max_m,
+                n, k, block_n, block_m);
         } else if (n == 2048 and k == 1408) {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output64x128_nm12_stage2_single_wg(
                 a, block_selector, dense_values, sparse_values,

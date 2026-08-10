@@ -32,11 +32,11 @@ public:
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(
         &hybrid_sparse_grouped_contiguous_output64x128_nm12_stage2_single_wg<
-            {}, {}, {}, {}, {}, {}, {}>);
+            {}, {}, {}, {}, {}, {}, {}, {}>);
     (void)ptr;
 }}
 )", args.block_n, args.block_m, 2, args.num_experts,
-            args.total_m, args.n, args.k);
+            args.total_m, args.m_alignment, args.n, args.k);
     }
 
     static void launch_impl(const KernelHandle& kernel,
@@ -57,8 +57,10 @@ static void sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_s
         const torch::Tensor& grouped_index, const torch::Tensor& d,
         const int total_m, const int num_experts, const int m_alignment,
         const int n, const int k, const int block_n, const int block_m) {
-    DG_HOST_ASSERT(block_n == 1 and block_m == 2);
-    DG_HOST_ASSERT(total_m % 64 == 0 and m_alignment == 128);
+    DG_HOST_ASSERT(
+        block_m == 2 and (block_n == 1 or block_n == 2));
+    DG_HOST_ASSERT(
+        total_m % 64 == 0 and (m_alignment == 64 or m_alignment == 128));
     DG_HOST_ASSERT(n % 128 == 0);
     constexpr int num_stages = 2;
     constexpr int output_bytes = 64 * 128 * sizeof(__nv_bfloat16);
@@ -77,17 +79,22 @@ static void sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_s
     const int smem_bytes = output_offset + output_bytes;
     const auto tensor_map_activation = make_tma_2d_desc(
         a, k, total_m, 128, 64, k, 128);
-    const auto tensor_map_dense = make_tma_2d_desc(
-        dense_values, 64,
-        num_experts * block_rows * block_groups * dense_count * 64,
-        64, 64, 64, 128);
     const auto tensor_map_sparse = make_tma_2d_desc(
         sparse_values, 32,
         num_experts * block_rows * block_groups * block_n * 64,
         32, 64, 32, 64);
+    const auto tensor_map_dense = dense_count > 0
+        ? make_tma_2d_desc(
+              dense_values, 64,
+              num_experts * block_rows * block_groups * dense_count * 64,
+              64, 64, 64, 128)
+        : tensor_map_sparse;
     const auto tensor_map_output = make_tma_cd_desc(
         d, total_m, n, 64, 128, n, 1, 128);
     const int total_tiles = (total_m / 64) * (n / 128);
+    const bool use_persistent_grid =
+        ((n == 1408 or n == 1536) and k == 2048) or
+        (n == 2048 and (k == 640 or k == 768));
     const auto args = SM90HybridSparseGroupedContiguousOutput64x128NM12Stage2SingleWGRuntime::Args {
         .block_selector = block_selector.data_ptr(),
         .hardware_metadata = hardware_metadata.data_ptr(),
@@ -99,7 +106,11 @@ static void sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_s
         .total_m = total_m, .num_experts = num_experts,
         .m_alignment = m_alignment,
         .n = n, .k = k, .block_n = block_n, .block_m = block_m,
-        .launch_args = LaunchArgs(total_tiles, 256, smem_bytes),
+        .launch_args = LaunchArgs(
+            use_persistent_grid
+                ? std::min(total_tiles, 8 * device_runtime->get_num_sms())
+                : total_tiles,
+            256, smem_bytes),
     };
     const auto runtime = compiler->build(
         "sm90_hybrid_sparse_grouped_contiguous_output64x128_nm12_stage2_single_wg",

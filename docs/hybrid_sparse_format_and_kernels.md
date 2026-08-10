@@ -8,15 +8,98 @@
 - 总体稀疏率为 `block_n / block_m x 50%`；当前 kernel 主路径使用 `64 x 64, 1:2`，即 25% 稀疏率。
 - Weight tile 是 kernel 读取的 `N x K` tile；当前要求等于 weight block。Output tile 的 M 维可独立调优。
 
-记 `BR=N/block_h`、`BG=K/(block_w*block_m)`、`D=block_m-block_n`，存储字段如下：
+### Variables
+
+| 变量 | 含义 |
+|---|---|
+| `E` | expert 数；普通 GEMM 无此维度 |
+| `N` | weight 行数，即 output-channel 维度 |
+| `K` | reduction 维度 |
+| `block_h` | weight block 在 N 维的高度 |
+| `block_w` | weight block 在 K 维的宽度，必须是 4 的倍数 |
+| `block_m` | 沿 K 维每组包含的 block 数 |
+| `block_n` | 每组执行块内 2:4 的 block 数 |
+| `BR` | block row 数，`N / block_h` |
+| `BG` | block group 数，`K / (block_w * block_m)` |
+| `D` | 每组 dense block 数，`block_m - block_n` |
+| `...` | 可选前导维度；grouped weight 中为 `[E]` |
+
+### Packed Storage
 
 | 字段 | dtype | shape | 含义 |
 |---|---|---|---|
-| `block_selector` | `int64` | `[..., BR, BG]` | bit mask，标记组内哪些 block 为 2:4 |
-| `dense_values` | weight dtype | `[..., BR, BG, D, block_h, block_w]` | dense block 的完整数据 |
-| `sparse_values` | weight dtype | `[..., BR, BG, block_n, block_h, block_w/2]` | 2:4 block 保留的两个元素 |
-| `sparse_metadata` | `uint8` | `[..., BR, BG, block_n, block_h, block_w/4]` | 每个 quartet 的六种保留位置编码 `0..5` |
-| `hardware_metadata` | `int32` | `[..., BR, BG, block_n, 2, 4, 16]` | `64 x 64` 专用的 lane-ready WGMMA.SP metadata |
+| `original_shape` | Python tuple | `[N,K]` 或 `[E,N,K]` | 压缩前 weight shape |
+| `layout` | config | - | `block_h/block_w/block_n/block_m` |
+| `block_selector` | `int64` | `[...,BR,BG]` | 每一 bit 对应组内一个 block；`1` 表示 2:4，`0` 表示 dense |
+| `dense_values` | weight dtype | `[...,BR,BG,D,block_h,block_w]` | dense block 的完整元素 |
+| `sparse_values` | weight dtype | `[...,BR,BG,block_n,block_h,block_w/2]` | 每个 2:4 quartet 保留的两个元素 |
+| `sparse_metadata` | `uint8` | `[...,BR,BG,block_n,block_h,block_w/4]` | 每个 quartet 的非零位置编码 `0..5` |
+| `hardware_metadata` | `int32` | `[...,BR,BG,block_n,2,4,16]` | `64 x 64` sparse block 专用的 lane-ready WGMMA.SP metadata |
+
+`block_selector` 决定 sparse block 在原 group 中的位置。`dense_values` 和 `sparse_values` 只保存各自的紧凑 stream，stream 内按原 block 索引升序排列。
+
+### Encoding Example
+
+以 `block_h=4, block_w=8, block_n:block_m=1:2` 为例，一个 group 包含 `B0/B1` 两个 block。若 `B0` dense、`B1` 2:4：
+
+```text
+block_selector = 0b10
+dense_values   = [B0]
+sparse_values  = [compress(B1)]
+```
+
+`B1` 的某一行为：
+
+```text
+[3.5, 0, -1.2, 0] [0, 2.0, 0, -4.0]
+       quartet 0            quartet 1
+```
+
+保留位置的通用编码为：
+
+| code | 保留位置 |
+|---:|---|
+| `0` | `(0,1)` |
+| `1` | `(0,2)` |
+| `2` | `(0,3)` |
+| `3` | `(1,2)` |
+| `4` | `(1,3)` |
+| `5` | `(2,3)` |
+
+因此该行压缩为：
+
+```text
+sparse_values[row]   = [3.5, -1.2, 2.0, -4.0]
+sparse_metadata[row] = [1, 4]
+```
+
+`block_w/2=4` 是保留的 value 数；`block_w/4=2` 是 quartet 数，每个 quartet 使用一个 `uint8` code。
+
+### Hardware Metadata
+
+`sparse_metadata` 是与硬件无关的通用格式，用于验证和 `to_dense()`。对 `64 x 64` sparse block，weight conversion 还会生成 `hardware_metadata`：
+
+```text
+pair code 0..5
+  -> WGMMA.SP 4-bit code: 0x4, 0x8, 0xC, 0x9, 0xD, 0xE
+  -> 按 K tile / warp / lane 重排
+  -> 每 8 个 4-bit code 打包为一个 int32
+```
+
+例如通用 code `1` 表示保留 `(0,2)`，转换为 WGMMA.SP code `0x8`。优化 kernel 可直接将 lane-ready `int32` 传给 `wgmma.mma_async.sp`，无需在 mainloop 内查表和重排。
+
+当前同时保存通用和硬件 metadata。对 BF16 `64 x 64, 1:2` 的一个 block group：
+
+| 数据 | 大小 |
+|---|---:|
+| `dense_values` | `8192 B` |
+| `sparse_values` | `4096 B` |
+| `sparse_metadata` | `1024 B` |
+| `hardware_metadata` | `512 B` |
+| `block_selector` | `8 B` |
+| 合计 | `13832 B` |
+
+`sparse_metadata` 占两套 metadata 的 `66.67%`，占当前 packed weight 的 `7.40%`。若部署格式只保留 `hardware_metadata`，总大小从 dense weight 的 `84.42%` 降至 `78.17%`。
 
 `dense_to_hybrid_block_sparse` 校验 block N:M 和块内 2:4 后分离 dense/sparse stream；`to_dense()` 根据 selector 与 metadata 重建零填充 dense weight，供 Torch/DeepGEMM correctness reference 使用。
 
