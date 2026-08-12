@@ -124,7 +124,7 @@ __device__ __forceinline__ void advance_pipeline_grouped_output128x128_stage3(
 }
 
 template <int kBlockN, int kBlockM, int kPipelineStages,
-          int kNumExperts, int kMaxM, int kN, int kK>
+          int kNumExperts, int kN, int kK>
 __global__ __launch_bounds__(kThreadsGroupedOutput128x128Stage3, 1)
 void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
         const long long* block_selector, const unsigned* hardware_metadata,
@@ -137,10 +137,10 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
         const int block_n, const int block_m, const int dispatch_mode) {
     static_assert(kBlockN == 1 && kBlockM == 2);
     static_assert(kPipelineStages == 3);
-    static_assert(kNumExperts > 0 && kMaxM % 128 == 0);
+    static_assert(kNumExperts > 0);
     static_assert(kN % 128 == 0 && kK % 128 == 0);
     if (block_n != kBlockN || block_m != kBlockM ||
-        num_experts != kNumExperts || max_m != kMaxM ||
+        num_experts != kNumExperts || max_m % 128 != 0 ||
         n != kN || k != kK)
         return;
     if (dispatch_mode != 0) {
@@ -188,14 +188,23 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
     const int warp_in_math_wg = warp & 3;
     const int thread_in_metadata_group = lane & 3;
     constexpr int block_groups = kK / (kBlock * kBlockM);
-    constexpr int tiles_per_expert =
-        kMaxM /
-        kOutputTileMGroupedOutput128x128Stage3;
-    constexpr int tiles_m = kNumExperts * tiles_per_expert;
     constexpr int tiles_n =
         (kN + kOutputTileNGroupedOutput128x128Stage3 - 1) /
         kOutputTileNGroupedOutput128x128Stage3;
-    constexpr int total_tiles = tiles_m * tiles_n;
+    int active_tiles_m = 0;
+    for (int expert = lane; expert < kNumExperts; expert += 32)
+        active_tiles_m +=
+            (grouped_index[expert] +
+             kOutputTileMGroupedOutput128x128Stage3 - 1) /
+            kOutputTileMGroupedOutput128x128Stage3;
+#pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1)
+        active_tiles_m += __shfl_down_sync(
+            0xffffffff, active_tiles_m, offset);
+    active_tiles_m = __shfl_sync(0xffffffff, active_tiles_m, 0);
+    if (active_tiles_m == 0)
+        return;
+    const int total_tiles = active_tiles_m * tiles_n;
 
     extern __shared__ __align__(1024) unsigned char smem[];
     auto stage_base = [&](const int stage) { return smem + stage * kStageBytes; };
@@ -264,15 +273,48 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
     for (int tile_idx = static_cast<int>(blockIdx.x);
          tile_idx < total_tiles;
          tile_idx += static_cast<int>(gridDim.x)) {
-        const int tile_m = tile_idx % tiles_m;
-        const int tile_n = tile_idx / tiles_m;
-        const int expert = tile_m / tiles_per_expert;
-        const int local_tile_m = tile_m % tiles_per_expert;
+        const int active_tile_m = tile_idx % active_tiles_m;
+        const int tile_n = tile_idx / active_tiles_m;
+        int expert = 0;
+        int local_tile_m = active_tile_m;
+#pragma unroll
+        for (int expert_base = 0; expert_base < kNumExperts;
+             expert_base += 32) {
+            const int candidate_expert = expert_base + lane;
+            const int expert_tiles = candidate_expert < kNumExperts
+                ? (grouped_index[candidate_expert] +
+                   kOutputTileMGroupedOutput128x128Stage3 - 1) /
+                      kOutputTileMGroupedOutput128x128Stage3
+                : 0;
+            int tile_prefix = expert_tiles;
+#pragma unroll
+            for (int offset = 1; offset < 32; offset <<= 1) {
+                const int prior = __shfl_up_sync(
+                    0xffffffff, tile_prefix, offset);
+                if (lane >= offset)
+                    tile_prefix += prior;
+            }
+            const unsigned owner_mask = __ballot_sync(
+                0xffffffff,
+                candidate_expert < kNumExperts &&
+                    local_tile_m < tile_prefix);
+            if (owner_mask != 0) {
+                const int owner_lane = __ffs(owner_mask) - 1;
+                expert = expert_base + owner_lane;
+                const int owner_end = __shfl_sync(
+                    0xffffffff, tile_prefix, owner_lane);
+                const int owner_count = __shfl_sync(
+                    0xffffffff, expert_tiles, owner_lane);
+                local_tile_m -= owner_end - owner_count;
+                break;
+            }
+            local_tile_m -= __shfl_sync(0xffffffff, tile_prefix, 31);
+        }
         const int local_m =
             local_tile_m *
             kOutputTileMGroupedOutput128x128Stage3;
         const int output_tile_m =
-            expert * kMaxM + local_m;
+            expert * max_m + local_m;
         const int output_tile_n =
             tile_n * kOutputTileNGroupedOutput128x128Stage3;
         const int block_row_base = tile_n * kWeightRows;
@@ -280,11 +322,6 @@ void hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent(
         const int valid_rows = remaining <= 0
             ? 0
             : (remaining < 128 ? remaining : 128);
-
-        // Masked output rows are unspecified, so empty capacity tiles can be
-        // omitted without issuing TMA, WGMMA, or output stores.
-        if (valid_rows == 0)
-            continue;
 
         if (warp == 10) {
             const bool is_leader = cute::elect_one_sync();

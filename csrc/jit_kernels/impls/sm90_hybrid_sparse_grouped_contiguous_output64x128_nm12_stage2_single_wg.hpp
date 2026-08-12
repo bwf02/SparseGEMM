@@ -22,6 +22,7 @@ public:
         int k;
         int block_n;
         int block_m;
+        int active_tail_block;
         LaunchArgs launch_args;
     };
 
@@ -32,11 +33,11 @@ public:
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(
         &hybrid_sparse_grouped_contiguous_output64x128_nm12_stage2_single_wg<
-            {}, {}, {}, {}, {}, {}, {}, {}>);
+            {}, {}, {}, {}, {}, {}, {}>);
     (void)ptr;
 }}
-)", args.block_n, args.block_m, 2, args.num_experts,
-            args.total_m, args.m_alignment, args.n, args.k);
+    )", args.block_n, args.block_m, 2, args.num_experts,
+            args.m_alignment, args.n, args.k);
     }
 
     static void launch_impl(const KernelHandle& kernel,
@@ -46,7 +47,8 @@ static void __instantiate_kernel() {{
             args.grouped_index, args.tensor_map_activation,
             args.tensor_map_dense, args.tensor_map_sparse,
             args.tensor_map_output, args.total_m, args.num_experts,
-            args.m_alignment, args.n, args.k, args.block_n, args.block_m));
+            args.m_alignment, args.n, args.k, args.block_n, args.block_m,
+            args.active_tail_block));
     }
 };
 
@@ -56,12 +58,14 @@ static void sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_s
         const torch::Tensor& hardware_metadata,
         const torch::Tensor& grouped_index, const torch::Tensor& d,
         const int total_m, const int num_experts, const int m_alignment,
-        const int n, const int k, const int block_n, const int block_m) {
+        const int n, const int k, const int block_n, const int block_m,
+        const int active_tail_block) {
     DG_HOST_ASSERT(
         block_m == 2 and (block_n == 1 or block_n == 2));
     DG_HOST_ASSERT(
         total_m % 64 == 0 and (m_alignment == 64 or m_alignment == 128));
     DG_HOST_ASSERT(n % 128 == 0);
+    DG_HOST_ASSERT(active_tail_block >= -1 and active_tail_block < block_m);
     constexpr int num_stages = 2;
     constexpr int output_bytes = 64 * 128 * sizeof(__nv_bfloat16);
     const int block_rows = n / 64;
@@ -106,6 +110,7 @@ static void sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_s
         .total_m = total_m, .num_experts = num_experts,
         .m_alignment = m_alignment,
         .n = n, .k = k, .block_n = block_n, .block_m = block_m,
+        .active_tail_block = active_tail_block,
         .launch_args = LaunchArgs(
             use_persistent_grid
                 ? std::min(total_tiles, 8 * device_runtime->get_num_sms())

@@ -1587,6 +1587,14 @@ def _select_hybrid_block_sparse_gemm_wgmma_tuned(
             (2048, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
             (4096, 1408, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
             (4096, 2048, 1408): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
+            (8192, 5632, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
+            (8192, 2048, 2816): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
+            (17368, 5632, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind,
+            (17368, 2048, 2816): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
+            (23475, 5632, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
+            (23475, 2048, 2816): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_selector,
+            (32768, 5632, 2048): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
+            (32768, 2048, 2816): hybrid_block_sparse_gemm_wgmma_tma_fused_stsm_persistent_lane_ready_producer_metadata_copy_output128x64_stage_kind_desc_reuse_compact,
         }
         if shape in tuned:
             return tuned[shape]
@@ -1853,6 +1861,7 @@ def hybrid_block_sparse_grouped_contiguous_wgmma_tma(
     grouped_layout: torch.Tensor,
     m_alignment: int,
     out: Optional[torch.Tensor] = None,
+    active_tail_block: int = -1,
 ) -> torch.Tensor:
     """Run fused WGMMA/TMA grouped GEMM with psum contiguous semantics."""
     _, n, _ = _validate_grouped_inputs(a, packed_weight, grouped_layout, 2)
@@ -1861,6 +1870,10 @@ def hybrid_block_sparse_grouped_contiguous_wgmma_tma(
         raise TypeError("m_alignment must be an integer")
     if m_alignment <= 0 or m_alignment % 64 != 0:
         raise ValueError("m_alignment must be positive and divisible by 64")
+    if not isinstance(active_tail_block, int) or isinstance(active_tail_block, bool):
+        raise TypeError("active_tail_block must be an integer")
+    if active_tail_block < -1 or active_tail_block >= packed_weight.layout.block_m:
+        raise ValueError("active_tail_block must identify a block or be -1")
     out = _prepare_grouped_out((a.shape[0], n), a, out)
 
     import deep_gemm
@@ -1877,6 +1890,7 @@ def hybrid_block_sparse_grouped_contiguous_wgmma_tma(
         m_alignment,
         packed_weight.layout.block_n,
         packed_weight.layout.block_m,
+        active_tail_block,
     )
     return out
 

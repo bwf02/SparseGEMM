@@ -32,12 +32,12 @@ public:
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(
         &hybrid_sparse_grouped_masked_output128x128_nm12_stage3_persistent<
-            {}, {}, {}, {}, {}, {}, {}>);
+            {}, {}, {}, {}, {}, {}>);
     (void)ptr;
 }}
 )",
             args.block_n, args.block_m, 3, args.num_experts,
-            args.max_m, args.n, args.k);
+            args.n, args.k);
     }
 
     static void launch_impl(const KernelHandle& kernel,

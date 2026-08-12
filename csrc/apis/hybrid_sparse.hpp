@@ -3661,7 +3661,8 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         const torch::Tensor& d,
         const int& m_alignment,
         const int& block_n,
-        const int& block_m) {
+        const int& block_m,
+        const int& active_tail_block) {
     const auto [total_m, k] = get_shape<2>(a);
     const auto [total_m_, n] = get_shape<2>(d);
     const auto [num_experts, selector_rows, selector_groups] =
@@ -3682,7 +3683,7 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, grouped_layout, d, total_m, num_experts,
-            m_alignment, n, k, block_n, block_m);
+            m_alignment, n, k, block_n, block_m, active_tail_block);
         return;
     }
     if (use_output64x128_layout and
@@ -3691,7 +3692,7 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, grouped_layout, d, total_m, num_experts,
-            m_alignment, n, k, block_n, block_m);
+            m_alignment, n, k, block_n, block_m, active_tail_block);
         return;
     }
     if (use_output64x128_layout and
@@ -3700,7 +3701,7 @@ static void hybrid_block_sparse_bf16_grouped_contiguous_wgmma_tma(
         sm90_hybrid_block_sparse_bf16_grouped_contiguous_output64x128_nm12_stage2_single_wg(
             a, block_selector, dense_values, sparse_values,
             hardware_metadata, grouped_layout, d, total_m, num_experts,
-            m_alignment, n, k, block_n, block_m);
+            m_alignment, n, k, block_n, block_m, active_tail_block);
         return;
     }
     if (block_n == 1 and block_m == 2 and
@@ -3782,14 +3783,21 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
                 hardware_metadata, masked_m, d, num_experts, max_m,
                 n, k, block_n, block_m);
         } else if (n % 128 == 0) {
-            sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_stage2_persistent_output_reuse_warp_handshake(
-                a, block_selector, dense_values, sparse_values,
-                hardware_metadata, masked_m, d, num_experts, max_m,
-                n, k, block_n, block_m, -1);
-            sm90_hybrid_block_sparse_bf16_grouped_masked_output128x128_nm12_stage3_persistent(
-                a, block_selector, dense_values, sparse_values,
-                hardware_metadata, masked_m, d, num_experts, max_m,
-                n, k, block_n, block_m, 1);
+            if (expected_m > 128) {
+                sm90_hybrid_block_sparse_bf16_grouped_masked_output128x128_nm12_stage3_persistent(
+                    a, block_selector, dense_values, sparse_values,
+                    hardware_metadata, masked_m, d, num_experts, max_m,
+                    n, k, block_n, block_m);
+            } else {
+                sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_stage2_persistent_output_reuse_warp_handshake(
+                    a, block_selector, dense_values, sparse_values,
+                    hardware_metadata, masked_m, d, num_experts, max_m,
+                    n, k, block_n, block_m, -1);
+                sm90_hybrid_block_sparse_bf16_grouped_masked_output128x128_nm12_stage3_persistent(
+                    a, block_selector, dense_values, sparse_values,
+                    hardware_metadata, masked_m, d, num_experts, max_m,
+                    n, k, block_n, block_m, 1);
+            }
         } else {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_stage2_persistent_output_reuse_warp_handshake(
                 a, block_selector, dense_values, sparse_values,
@@ -4560,7 +4568,8 @@ static void register_apis(pybind11::module_& m) {
         pybind11::arg("d"),
         pybind11::arg("m_alignment"),
         pybind11::arg("block_n"),
-        pybind11::arg("block_m"));
+        pybind11::arg("block_m"),
+        pybind11::arg("active_tail_block"));
     m.def(
         "hybrid_block_sparse_bf16_grouped_masked_wgmma_tma",
         &hybrid_block_sparse_bf16_grouped_masked_wgmma_tma,

@@ -1297,6 +1297,46 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         self.assertEqual(torch.count_nonzero(actual[129:256]).item(), 0)
         self.assertEqual(torch.count_nonzero(actual[258:]).item(), 0)
 
+    def test_grouped_contiguous_skips_single_padded_k_block(self):
+        torch.manual_seed(306)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        activation = torch.randn(
+            1024, 768, device="cuda", dtype=torch.bfloat16
+        )
+        grouped_layout = torch.tensor(
+            [3, 129, 258], device="cuda", dtype=torch.int32
+        )
+
+        for active_tail_block in (0, 1):
+            weight = torch.randn(
+                3, 128, 768, device="cuda", dtype=torch.bfloat16
+            )
+            if active_tail_block == 0:
+                weight[..., 704:] = 0
+            else:
+                weight[..., :64] = 0
+            for sparse_block in (0, 1):
+                packed = dense_to_hybrid_block_sparse(
+                    weight,
+                    make_grouped_mask(
+                        weight, layout, sparse_block_ids=(sparse_block,)
+                    ),
+                    layout,
+                )
+                expected = hybrid_block_sparse_grouped_contiguous_ref(
+                    activation, packed, grouped_layout, m_alignment=64
+                )
+                actual = hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+                    activation,
+                    packed,
+                    grouped_layout,
+                    m_alignment=64,
+                    active_tail_block=active_tail_block,
+                )
+                torch.testing.assert_close(
+                    actual, expected, rtol=1e-2, atol=1e-2
+                )
+
     def test_grouped_contiguous_nm22_fastpath_matches_reference(self):
         torch.manual_seed(305)
         layout = HybridBlockSparseLayout(64, 64, 2, 2)
