@@ -345,7 +345,14 @@ def main() -> None:
             pass
         summaries.append(summarize(mode, tasks))
 
-    torch.testing.assert_close(outputs["global"], outputs["prebind"], rtol=0, atol=0)
+    for expert, rows in enumerate(counts_cpu.tolist()):
+        if rows:
+            torch.testing.assert_close(
+                outputs["global"][expert, :rows],
+                outputs["prebind"][expert, :rows],
+                rtol=0,
+                atol=0,
+            )
     result = {
         "shape": {
             "batch_size": args.bs,
