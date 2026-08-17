@@ -3729,7 +3729,9 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         const torch::Tensor& d,
         const int& expected_m,
         const int& block_n,
-        const int& block_m) {
+        const int& block_m,
+        const bool& use_active_expert_prebind,
+        const std::optional<torch::Tensor>& scheduler_trace) {
     const auto [num_experts, max_m, k] = get_shape<3>(a);
     const auto [num_experts_, max_m_, n] = get_shape<3>(d);
     DG_HOST_ASSERT(num_experts == num_experts_ and max_m == max_m_);
@@ -3747,7 +3749,8 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
             sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4_adaptive(
                 a, block_selector, dense_values, sparse_values,
                 hardware_metadata, masked_m, d, num_experts, max_m,
-                n, k, block_n, block_m);
+                n, k, block_n, block_m, use_active_expert_prebind,
+                scheduler_trace);
         } else if (n == 1408 and k == 2048) {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2_masked_epilogue(
                 a, block_selector, dense_values, sparse_values,
@@ -4583,7 +4586,9 @@ static void register_apis(pybind11::module_& m) {
         pybind11::arg("d"),
         pybind11::arg("expected_m"),
         pybind11::arg("block_n"),
-        pybind11::arg("block_m"));
+        pybind11::arg("block_m"),
+        pybind11::arg("use_active_expert_prebind"),
+        pybind11::arg("scheduler_trace") = pybind11::none());
 }
 
 } // namespace deep_gemm::hybrid_sparse

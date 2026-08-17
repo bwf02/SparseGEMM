@@ -7,12 +7,54 @@
 #define CUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED
 #endif
 #include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm.cuh>
+#include <deep_gemm/scheduler/active_expert_prebind.cuh>
 
 constexpr int kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive = 32;
 constexpr int kOutputTileNGroupedMaskedOutput32x64Stage4Adaptive = 64;
 constexpr int kMathThreadsGroupedMaskedOutput32x64Stage4Adaptive = 128;
 constexpr int kThreadsGroupedMaskedOutput32x64Stage4Adaptive = 256;
 constexpr int kAccumulatorCountGroupedMaskedOutput32x64Stage4Adaptive = 16;
+constexpr int kSchedulerTraceEvents = 7;
+constexpr int kSchedulerTraceFields = 9;
+
+enum class SchedulerTraceEvent : int {
+    kTaskAssigned = 0,
+    kProducerBegin = 1,
+    kProducerEnd = 2,
+    kConsumerBegin = 3,
+    kConsumerEnd = 4,
+    kEmptyBegin = 5,
+    kEmptyEnd = 6,
+};
+
+template <bool kEnabled>
+__device__ __forceinline__ void record_scheduler_trace(
+        long long* trace, int max_tasks, int task, SchedulerTraceEvent event,
+        int expert, int local_tile_m, int tile_n, int valid_rows) {
+    if constexpr (!kEnabled)
+        return;
+    if (trace == nullptr || task < 0 || task >= max_tasks)
+        return;
+
+    unsigned long long timestamp;
+    unsigned sm_id;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(timestamp));
+    asm volatile("mov.u32 %0, %%smid;" : "=r"(sm_id));
+    const long long offset =
+        ((static_cast<long long>(blockIdx.x) * max_tasks + task) *
+             kSchedulerTraceEvents +
+         static_cast<int>(event)) *
+        kSchedulerTraceFields;
+    trace[offset + 1] = static_cast<long long>(sm_id);
+    trace[offset + 2] = static_cast<long long>(blockIdx.x);
+    trace[offset + 3] = task;
+    trace[offset + 4] = static_cast<int>(event);
+    trace[offset + 5] = expert;
+    trace[offset + 6] = local_tile_m;
+    trace[offset + 7] = tile_n;
+    trace[offset + 8] = valid_rows;
+    trace[offset] = static_cast<long long>(timestamp);
+}
 
 constexpr unsigned long long make_grouped_masked_output32x64_stage4_desc(
         const unsigned byte_offset, const unsigned stride_byte_offset,
@@ -56,7 +98,9 @@ __device__ __forceinline__ void advance_pipeline_grouped_masked_output32x64_stag
 }
 
 template <int kBlockN, int kBlockM, int kPipelineStages,
-          int kNumExperts, int kMaxM, int kN, int kK>
+          int kNumExperts, int kMaxM, int kN, int kK,
+          int kNumWorkers, bool kUseActiveExpertPrebind,
+          bool kEnableSchedulerTrace>
 __global__ __launch_bounds__(kThreadsGroupedMaskedOutput32x64Stage4Adaptive, 1)
 void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
         const long long* block_selector, const unsigned* hardware_metadata,
@@ -66,11 +110,13 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
         const __grid_constant__ cute::TmaDescriptor tensor_map_sparse,
         const __grid_constant__ cute::TmaDescriptor tensor_map_output,
         const int num_experts, const int max_m, const int n, const int k,
-        const int block_n, const int block_m) {
+        const int block_n, const int block_m, long long* scheduler_trace,
+        const int scheduler_trace_max_tasks) {
     static_assert(kBlockN == 1 && kBlockM == 2);
     static_assert(kPipelineStages == 4);
     static_assert(kNumExperts > 0 && kMaxM == 64);
     static_assert(kN % 64 == 0 && kK % 128 == 0);
+    static_assert(!kUseActiveExpertPrebind || kNumExperts <= kNumWorkers);
     if (block_n != kBlockN || block_m != kBlockM ||
         num_experts != kNumExperts || max_m != kMaxM ||
         n != kN || k != kK)
@@ -172,12 +218,33 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
     unsigned producer_phase = 0;
     int consumer_stage = 0;
     unsigned consumer_phase = 0;
-    for (int tile_idx = static_cast<int>(blockIdx.x);
-         tile_idx < total_tiles; tile_idx += static_cast<int>(gridDim.x)) {
-        const int tile_m = tile_idx % tiles_m;
-        const int tile_n = tile_idx / tiles_m;
-        const int expert = tile_m / tiles_per_expert;
-        const int local_tile_m = tile_m % tiles_per_expert;
+    deep_gemm::sched::ActiveExpertPrebindScheduler<
+        kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive,
+        kNumExperts, kNumWorkers, kUseActiveExpertPrebind> prebind_scheduler(
+            tiles_n, grouped_index);
+    int full_grid_tile = static_cast<int>(blockIdx.x);
+    int trace_task = 0;
+    while (true) {
+        int expert;
+        int local_tile_m;
+        int tile_n;
+        if constexpr (kUseActiveExpertPrebind) {
+            uint32_t group_idx, m_block_idx, n_block_idx;
+            if (!prebind_scheduler.get_next_tile(
+                    group_idx, m_block_idx, n_block_idx))
+                break;
+            expert = static_cast<int>(group_idx);
+            local_tile_m = static_cast<int>(m_block_idx);
+            tile_n = static_cast<int>(n_block_idx);
+        } else {
+            if (full_grid_tile >= total_tiles)
+                break;
+            const int tile_m = full_grid_tile % tiles_m;
+            tile_n = full_grid_tile / tiles_m;
+            expert = tile_m / tiles_per_expert;
+            local_tile_m = tile_m % tiles_per_expert;
+            full_grid_tile += static_cast<int>(gridDim.x);
+        }
         const int local_m =
             local_tile_m *
             kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive;
@@ -191,7 +258,18 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
             ? 0
             : (remaining < 32 ? remaining : 32);
 
+        if (threadIdx.x == 0)
+            record_scheduler_trace<kEnableSchedulerTrace>(
+                scheduler_trace, scheduler_trace_max_tasks, trace_task,
+                SchedulerTraceEvent::kTaskAssigned, expert, local_tile_m,
+                tile_n, valid_rows);
+
         if (valid_rows == 0) {
+            if (threadIdx.x == 0)
+                record_scheduler_trace<kEnableSchedulerTrace>(
+                    scheduler_trace, scheduler_trace_max_tasks, trace_task,
+                    SchedulerTraceEvent::kEmptyBegin, expert, local_tile_m,
+                    tile_n, valid_rows);
             for (int index = static_cast<int>(threadIdx.x);
                  index <
                      kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive *
@@ -207,11 +285,22 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
                 cute::tma_store_wait<0>();
             }
             __syncthreads();
+            if (threadIdx.x == 0)
+                record_scheduler_trace<kEnableSchedulerTrace>(
+                    scheduler_trace, scheduler_trace_max_tasks, trace_task,
+                    SchedulerTraceEvent::kEmptyEnd, expert, local_tile_m,
+                    tile_n, valid_rows);
+            ++trace_task;
             continue;
         }
 
         if (warp == 6) {
             const bool is_leader = cute::elect_one_sync();
+            if (is_leader)
+                record_scheduler_trace<kEnableSchedulerTrace>(
+                    scheduler_trace, scheduler_trace_max_tasks, trace_task,
+                    SchedulerTraceEvent::kProducerBegin, expert, local_tile_m,
+                    tile_n, valid_rows);
 #pragma unroll
             for (int block_group = 0; block_group < block_groups;
                  ++block_group) {
@@ -299,9 +388,19 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
                 advance_pipeline_grouped_masked_output32x64_stage4_adaptive<kPipelineStages>(
                     producer_stage, producer_phase);
             }
+            if (is_leader)
+                record_scheduler_trace<kEnableSchedulerTrace>(
+                    scheduler_trace, scheduler_trace_max_tasks, trace_task,
+                    SchedulerTraceEvent::kProducerEnd, expert, local_tile_m,
+                    tile_n, valid_rows);
         }
 
         if (warp < 4) {
+            if (threadIdx.x == 0)
+                record_scheduler_trace<kEnableSchedulerTrace>(
+                    scheduler_trace, scheduler_trace_max_tasks, trace_task,
+                    SchedulerTraceEvent::kConsumerBegin, expert, local_tile_m,
+                    tile_n, valid_rows);
             float accumulator[kAccumulatorCountGroupedMaskedOutput32x64Stage4Adaptive] = {};
             bool has_accumulator = false;
 #pragma unroll
@@ -495,6 +594,12 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
             }
             cutlass::arch::NamedBarrier::sync(
                 kMathThreadsGroupedMaskedOutput32x64Stage4Adaptive, 1);
+            if (threadIdx.x == 0)
+                record_scheduler_trace<kEnableSchedulerTrace>(
+                    scheduler_trace, scheduler_trace_max_tasks, trace_task,
+                    SchedulerTraceEvent::kConsumerEnd, expert, local_tile_m,
+                    tile_n, valid_rows);
         }
+        ++trace_task;
     }
 }

@@ -1413,6 +1413,41 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             actual[2, :64], expected[2, :64], rtol=1e-2, atol=1e-2
         )
 
+    def test_grouped_masked_wgmma_tma_active_expert_prebind_matches_global(self):
+        torch.manual_seed(409)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(
+            3, 1408, 2048, device="cuda", dtype=torch.bfloat16
+        )
+        mask = make_grouped_mask(weight, layout, sparse_block_ids=(0,))
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+        activation = torch.randn(
+            3, 64, 2048, device="cuda", dtype=torch.bfloat16
+        )
+        masked_m = torch.tensor([0, 5, 33], device="cuda", dtype=torch.int32)
+
+        global_output = hybrid_block_sparse_grouped_masked_wgmma_tma(
+            activation,
+            packed,
+            masked_m,
+            expected_m=13,
+            use_active_expert_prebind=False,
+        )
+        prebind_output = hybrid_block_sparse_grouped_masked_wgmma_tma(
+            activation,
+            packed,
+            masked_m,
+            expected_m=13,
+            use_active_expert_prebind=True,
+        )
+
+        torch.testing.assert_close(
+            prebind_output[1, :5], global_output[1, :5], rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            prebind_output[2, :33], global_output[2, :33], rtol=0, atol=0
+        )
+
     def test_grouped_masked_wgmma_tma_output128_matches_reference(self):
         torch.manual_seed(406)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)

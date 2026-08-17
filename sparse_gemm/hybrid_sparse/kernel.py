@@ -1,5 +1,6 @@
 """CUDA entry points for hybrid block sparse weights."""
 
+import os
 from typing import Optional
 
 import torch
@@ -1901,6 +1902,8 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
     masked_m: torch.Tensor,
     out: Optional[torch.Tensor] = None,
     expected_m: Optional[int] = None,
+    use_active_expert_prebind: Optional[bool] = None,
+    scheduler_trace: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Run fused WGMMA/TMA grouped GEMM with per-expert valid M counts.
 
@@ -1925,6 +1928,24 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
         raise ValueError(
             "expected_m must be positive and no greater than activation capacity"
         )
+    if use_active_expert_prebind is None:
+        use_active_expert_prebind = os.environ.get(
+            "SPARSE_GEMM_ACTIVE_EXPERT_PREBIND", "1"
+        ) not in ("0", "false", "False")
+    if not isinstance(use_active_expert_prebind, bool):
+        raise TypeError("use_active_expert_prebind must be a bool")
+    if scheduler_trace is not None:
+        if (
+            scheduler_trace.device != a.device
+            or scheduler_trace.dtype != torch.int64
+            or scheduler_trace.ndim != 4
+            or scheduler_trace.shape[2:] != (7, 9)
+            or not scheduler_trace.is_contiguous()
+        ):
+            raise ValueError(
+                "scheduler_trace must be a contiguous CUDA int64 tensor "
+                "with shape [workers, max_tasks, 7, 9]"
+            )
     out = _prepare_grouped_out((experts, a.shape[1], n), a, out)
 
     import deep_gemm
@@ -1941,5 +1962,7 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
         expected_m,
         packed_weight.layout.block_n,
         packed_weight.layout.block_m,
+        use_active_expert_prebind,
+        scheduler_trace,
     )
     return out

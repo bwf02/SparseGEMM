@@ -21,6 +21,11 @@ public:
         int k;
         int block_n;
         int block_m;
+        int num_workers;
+        bool use_active_expert_prebind;
+        void* scheduler_trace;
+        int scheduler_trace_max_tasks;
+        bool enable_scheduler_trace;
         LaunchArgs launch_args;
     };
 
@@ -31,12 +36,14 @@ public:
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(
         &hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive<
-            {}, {}, {}, {}, {}, {}, {}>);
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
     (void)ptr;
 }}
 )",
             args.block_n, args.block_m,
-            4, args.num_experts, args.max_m, args.n, args.k);
+            4, args.num_experts, args.max_m, args.n, args.k, args.num_workers,
+            args.use_active_expert_prebind ? "true" : "false",
+            args.enable_scheduler_trace ? "true" : "false");
     }
 
     static void launch_impl(const KernelHandle& kernel,
@@ -47,7 +54,8 @@ static void __instantiate_kernel() {{
             args.tensor_map_activation, args.tensor_map_dense,
             args.tensor_map_sparse, args.tensor_map_output,
             args.num_experts, args.max_m, args.n, args.k,
-            args.block_n, args.block_m));
+            args.block_n, args.block_m, args.scheduler_trace,
+            args.scheduler_trace_max_tasks));
     }
 };
 
@@ -57,7 +65,9 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4
         const torch::Tensor& hardware_metadata,
         const torch::Tensor& grouped_index, const torch::Tensor& d,
         const int num_experts, const int max_m, const int n, const int k,
-        const int block_n, const int block_m) {
+        const int block_n, const int block_m,
+        const bool use_active_expert_prebind,
+        const std::optional<torch::Tensor>& scheduler_trace) {
     DG_HOST_ASSERT(block_n == 1 and block_m == 2);
     DG_HOST_ASSERT(max_m == 64);
     constexpr int output_bytes = 32 * 64 * sizeof(__nv_bfloat16);
@@ -90,6 +100,22 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4
         d, num_experts * max_m, n, 32, 64, n, 1, 128);
     const int total_tiles =
         num_experts * 2 * ((n + 63) / 64);
+    const int num_sms = device_runtime->get_num_sms();
+    const int num_workers = 2 * num_sms;
+    const bool enable_prebind =
+        use_active_expert_prebind && num_experts <= num_workers;
+    const bool enable_scheduler_trace = scheduler_trace.has_value();
+    int scheduler_trace_max_tasks = 0;
+    void* scheduler_trace_ptr = nullptr;
+    if (enable_scheduler_trace) {
+        const auto& trace = scheduler_trace.value();
+        DG_HOST_ASSERT(trace.is_cuda() && trace.is_contiguous());
+        DG_HOST_ASSERT(trace.scalar_type() == torch::kInt64 && trace.dim() == 4);
+        DG_HOST_ASSERT(trace.size(0) >= num_workers && trace.size(1) > 0);
+        DG_HOST_ASSERT(trace.size(2) == 7 && trace.size(3) == 9);
+        scheduler_trace_max_tasks = static_cast<int>(trace.size(1));
+        scheduler_trace_ptr = trace.data_ptr();
+    }
     const auto args = SM90HybridSparseGroupedMaskedOutput32x64NM12Stage4AdaptiveRuntime::Args {
         .block_selector = block_selector.data_ptr(),
         .hardware_metadata = hardware_metadata.data_ptr(),
@@ -101,10 +127,23 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4
         .num_experts = num_experts, .max_m = max_m,
         .n = n, .k = k,
         .block_n = block_n, .block_m = block_m,
-        .launch_args = LaunchArgs(total_tiles, 256, smem_bytes),
+        .num_workers = num_workers,
+        .use_active_expert_prebind = enable_prebind,
+        .scheduler_trace = scheduler_trace_ptr,
+        .scheduler_trace_max_tasks = scheduler_trace_max_tasks,
+        .enable_scheduler_trace = enable_scheduler_trace,
+        .launch_args = LaunchArgs(
+            enable_prebind ? num_workers : std::min(total_tiles, num_workers),
+            256, smem_bytes),
     };
     const auto runtime = compiler->build(
-        "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive",
+        enable_prebind
+            ? (enable_scheduler_trace
+                   ? "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_prebind_trace"
+                   : "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_prebind")
+            : (enable_scheduler_trace
+                   ? "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_global_persistent_trace"
+                   : "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_global_persistent"),
         SM90HybridSparseGroupedMaskedOutput32x64NM12Stage4AdaptiveRuntime::generate(args));
     SM90HybridSparseGroupedMaskedOutput32x64NM12Stage4AdaptiveRuntime::launch(runtime, args);
 }
