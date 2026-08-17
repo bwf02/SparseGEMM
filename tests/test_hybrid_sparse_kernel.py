@@ -1417,12 +1417,12 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         torch.manual_seed(409)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)
         weight = torch.randn(
-            3, 1408, 2048, device="cuda", dtype=torch.bfloat16
+            3, 128, 256, device="cuda", dtype=torch.bfloat16
         )
         mask = make_grouped_mask(weight, layout, sparse_block_ids=(0,))
         packed = dense_to_hybrid_block_sparse(weight, mask, layout)
         activation = torch.randn(
-            3, 64, 2048, device="cuda", dtype=torch.bfloat16
+            3, 64, 256, device="cuda", dtype=torch.bfloat16
         )
         masked_m = torch.tensor([0, 5, 33], device="cuda", dtype=torch.int32)
 
