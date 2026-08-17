@@ -3742,7 +3742,7 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         hardware_metadata, masked_m, d, block_n, block_m,
         num_experts, n, k);
     if (block_n == 1 and block_m == 2 and max_m == 64) {
-        const bool use_tiny_m_adaptive = expected_m <= 32;
+        const bool use_tiny_m_adaptive = expected_m <= 64;
         if (use_tiny_m_adaptive) {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4_adaptive(
                 a, block_selector, dense_values, sparse_values,

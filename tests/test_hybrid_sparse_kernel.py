@@ -1430,14 +1430,14 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
             activation,
             packed,
             masked_m,
-            expected_m=13,
+            expected_m=64,
             use_active_expert_prebind=False,
         )
         prebind_output = hybrid_block_sparse_grouped_masked_wgmma_tma(
             activation,
             packed,
             masked_m,
-            expected_m=13,
+            expected_m=64,
             use_active_expert_prebind=True,
         )
 

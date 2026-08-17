@@ -228,7 +228,7 @@ def run_native_baselines(
         sparse_us = time_cuda(sparse_fn, warmup, iterations)
         deepgemm_us = time_cuda(deepgemm_fn, warmup, iterations)
         prebind_eligible = (
-            request_prebind and capacity == 64 and expected_m <= 32
+            request_prebind and capacity == 64 and expected_m <= 64
         )
         append_result(
             writer, model, projection, "sparse_gemm", tokens, spec, n, k,
@@ -282,7 +282,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=20)
-    parser.add_argument("--prebind-max-m", type=int, default=32)
+    parser.add_argument("--prebind-max-m", type=int, default=64)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--output", default="/tmp/moe_tp1_kernel_baselines.csv")
     parser.add_argument("--native-only", action="store_true")
