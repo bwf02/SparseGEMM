@@ -47,6 +47,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-layer", type=int, default=0)
     parser.add_argument("--tp-rank", type=int, choices=(0, 1), default=0)
     parser.add_argument("--max-tasks", type=int, default=32)
+    parser.add_argument(
+        "--plot-sm-count",
+        type=int,
+        default=8,
+        help="Number of consecutive SMs shown in compact timeline plots",
+    )
     return parser.parse_args()
 
 
@@ -209,13 +215,19 @@ def write_perfetto(path: Path, mode: str, tasks: list[dict[str, object]]) -> Non
     path.write_text(json.dumps({"traceEvents": events}, separators=(",", ":")))
 
 
-def write_plot(path: Path, mode: str, tasks: list[dict[str, object]]) -> None:
-    import matplotlib.pyplot as plt
+def draw_timeline(
+    axis,
+    mode: str,
+    tasks: list[dict[str, object]],
+    selected_sms: list[int],
+    x_limit_us: float,
+) -> None:
     from matplotlib.colors import hsv_to_rgb
-    from matplotlib.patches import Patch
 
     intervals = []
     for task in tasks:
+        if task["sm"] not in selected_sms:
+            continue
         span = interval(
             task,
             "empty_begin" if task["valid_rows"] == 0 else "consumer_begin",
@@ -230,7 +242,6 @@ def write_plot(path: Path, mode: str, tasks: list[dict[str, object]]) -> None:
         expert: hsv_to_rgb(((expert * 0.61803398875) % 1.0, 0.65, 0.82))
         for expert in range(60)
     }
-    figure, axis = plt.subplots(figsize=(16, max(10, len(lanes) * 0.12)))
     for task, begin, end in intervals:
         y = lane_index[(task["sm"], task["cta"])]
         color = "#d0d0d0" if task["valid_rows"] == 0 else colors[task["expert"]]
@@ -240,24 +251,93 @@ def write_plot(path: Path, mode: str, tasks: list[dict[str, object]]) -> None:
             facecolors=color,
             edgecolors="none",
         )
-    tick_step = max(1, len(lanes) // 24)
-    ticks = list(range(0, len(lanes), tick_step))
-    axis.set_yticks(ticks, [f"SM {lanes[i][0]} / CTA {lanes[i][1]}" for i in ticks])
-    axis.set_xlabel("Time from first recorded task (us)")
-    axis.set_ylabel("Resident CTA")
-    axis.set_title(f"{mode}: CTA expert/tile consumer timeline")
+    sm_lanes = {
+        sm: [index for index, (lane_sm, _) in enumerate(lanes) if lane_sm == sm]
+        for sm in selected_sms
+    }
+    ticks = [sum(sm_lanes[sm]) / len(sm_lanes[sm]) for sm in selected_sms]
+    axis.set_yticks(ticks, [f"SM {sm}" for sm in selected_sms])
+    axis.set_ylabel("Sampled SM")
+    for sm in selected_sms[:-1]:
+        axis.axhline(max(sm_lanes[sm]) + 0.5, color="#eeeeee", linewidth=0.6)
+    axis.set_title(f"{mode.capitalize()} scheduler")
+    axis.set_xlim(0, x_limit_us)
     axis.grid(axis="x", color="#dddddd", linewidth=0.5)
     axis.invert_yaxis()
+
+
+def write_plot(
+    path: Path,
+    mode: str,
+    tasks: list[dict[str, object]],
+    selected_sms: list[int],
+    x_limit_us: float,
+) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    figure, axis = plt.subplots(figsize=(10, max(3.5, len(selected_sms) * 0.48)))
+    draw_timeline(axis, mode, tasks, selected_sms, x_limit_us)
+    axis.set_xlabel("Time from first recorded task (us)")
     axis.legend(
         handles=[
             Patch(facecolor="#d0d0d0", label="empty/padded tile"),
-            Patch(facecolor="#3f8f6b", label="active expert tile"),
+            Patch(facecolor="#3f8f6b", label="active tile (color = expert)"),
         ],
         loc="upper right",
     )
     figure.tight_layout()
     figure.savefig(path, dpi=180)
     plt.close(figure)
+
+
+def write_comparison_plot(
+    path: Path,
+    tasks_by_mode: dict[str, list[dict[str, object]]],
+    selected_sms: list[int],
+    x_limit_us: float,
+) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    figure, axes = plt.subplots(2, 1, figsize=(10, max(7, len(selected_sms) * 0.9)), sharex=True)
+    for axis, mode in zip(axes, ("global", "prebind")):
+        draw_timeline(axis, mode, tasks_by_mode[mode], selected_sms, x_limit_us)
+    axes[-1].set_xlabel("Time from first recorded task (us)")
+    axes[0].legend(
+        handles=[
+            Patch(facecolor="#d0d0d0", label="empty/padded tile"),
+            Patch(facecolor="#3f8f6b", label="active tile (color = expert)"),
+        ],
+        loc="upper right",
+    )
+    figure.tight_layout()
+    figure.savefig(path, dpi=180)
+    plt.close(figure)
+
+
+def select_plot_sms(tasks_by_mode: dict[str, list[dict[str, object]]], count: int) -> list[int]:
+    if count <= 0:
+        raise ValueError("--plot-sm-count must be positive")
+    common_sms = sorted(
+        set.intersection(
+            *({int(task["sm"]) for task in tasks} for tasks in tasks_by_mode.values())
+        )
+    )
+    return common_sms[:count]
+
+
+def timeline_us(tasks: list[dict[str, object]]) -> float:
+    spans = []
+    for task in tasks:
+        span = interval(
+            task,
+            "empty_begin" if task["valid_rows"] == 0 else "consumer_begin",
+            "empty_end" if task["valid_rows"] == 0 else "consumer_end",
+        )
+        if span:
+            spans.append(span)
+    return (max(end for _, end in spans) - min(begin for begin, _ in spans)) / 1000.0
 
 
 def summarize(mode: str, tasks: list[dict[str, object]]) -> dict[str, object]:
@@ -309,6 +389,7 @@ def main() -> None:
 
     outputs = {}
     summaries = []
+    tasks_by_mode = {}
     for mode, use_prebind in (("global", False), ("prebind", True)):
         trace = torch.full(
             (workers, args.max_tasks, len(EVENT_NAMES), len(FIELDS)),
@@ -337,13 +418,32 @@ def main() -> None:
         outputs[mode] = output.clone()
         rows = rows_from_trace(mode, trace)
         tasks = task_records(rows)
+        tasks_by_mode[mode] = tasks
         write_csv(output_dir / f"{mode}.csv", rows)
         write_perfetto(output_dir / f"{mode}.perfetto.json", mode, tasks)
-        try:
-            write_plot(output_dir / f"{mode}.png", mode, tasks)
-        except ImportError:
-            pass
         summaries.append(summarize(mode, tasks))
+
+    try:
+        selected_sms = select_plot_sms(tasks_by_mode, args.plot_sm_count)
+        x_limit_us = math.ceil(
+            max(timeline_us(tasks) for tasks in tasks_by_mode.values()) / 10.0
+        ) * 10.0
+        for mode, tasks in tasks_by_mode.items():
+            write_plot(
+                output_dir / f"{mode}.png",
+                mode,
+                tasks,
+                selected_sms,
+                x_limit_us,
+            )
+        write_comparison_plot(
+            output_dir / "scheduler_comparison.png",
+            tasks_by_mode,
+            selected_sms,
+            x_limit_us,
+        )
+    except ImportError:
+        pass
 
     for expert, rows in enumerate(counts_cpu.tolist()):
         if rows:

@@ -16,6 +16,8 @@ deep_gemm/include/cutlass
 # clangd settings
 /.clang*
 /.cache
+/outputs/
+/results/
 
 # Generated stub files
 stubs/
