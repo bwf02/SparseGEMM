@@ -63,6 +63,8 @@ MODEL_SPECS = {
     ),
 }
 
+DEFAULT_MODELS = ["qwen15", "deepseek_v2_lite", "qwen3_30b", "llama4_scout"]
+
 PROJECTIONS = {
     "gate_up": lambda spec: (2 * spec.expert_intermediate, spec.hidden),
     "down": lambda spec: (spec.hidden, spec.expert_intermediate),
@@ -70,10 +72,13 @@ PROJECTIONS = {
 
 
 def balanced_counts(tokens: int, spec: ModelSpec, device: str) -> torch.Tensor:
-    """Return the fixed-M batch used by the kernel experiment."""
-    return torch.full(
-        (spec.experts,), tokens, device=device, dtype=torch.int32
-    )
+    """Distribute the B * top-k routed rows evenly across experts."""
+    routed_rows = tokens * spec.top_k
+    base, remainder = divmod(routed_rows, spec.experts)
+    counts = torch.full((spec.experts,), base, device=device, dtype=torch.int32)
+    if remainder:
+        counts[:remainder] += 1
+    return counts
 
 
 def make_hybrid_mask(weight: torch.Tensor, layout: HybridBlockSparseLayout) -> torch.Tensor:
@@ -108,17 +113,13 @@ def time_cuda(fn, warmup: int, iterations: int) -> float:
 
 
 def test_count(tokens: int, args: argparse.Namespace) -> tuple[int, int]:
-    if tokens >= 8192:
-        return 2, max(2, args.iterations // 5)
-    if tokens >= 4096:
-        return 3, max(3, args.iterations // 3)
     return args.warmup, args.iterations
 
 
 def append_result(
     writer, model: str, projection: str, backend: str, tokens: int,
     spec: ModelSpec, n: int, k: int, counts: torch.Tensor, capacity: int,
-    latency_us: float, scheduler: str, dtype: str,
+    latency_us: float, scheduler: str, dtype: str, computed_m: int | None = None,
 ) -> None:
     valid_m = int(counts.sum().item())
     logical_flops = 2 * valid_m * n * k
@@ -131,6 +132,7 @@ def append_result(
         "active_experts": int(counts.ne(0).sum().item()),
         "top_k": spec.top_k,
         "valid_expert_m": valid_m,
+        "computed_expert_m": valid_m if computed_m is None else computed_m,
         "max_expert_m": int(counts.max().item()),
         "capacity_m": capacity,
         "N": n,
@@ -153,33 +155,52 @@ def run_external_baselines(
     slided_weight = slide_weight_2_of_8(weight)
     for tokens in args.batch_sizes:
         counts = balanced_counts(tokens, spec, "cuda")
-        capacity = tokens
+        max_expert_m = int(counts.max().item())
+        capacity = max(8, math.ceil(max_expert_m / 8) * 8)
         activation = torch.randn(
             spec.experts, capacity, k, device="cuda", dtype=torch.float16
         )
         warmup, iterations = test_count(tokens, args)
 
-        slidesparse = SlideSparseBatch(slided_weight, capacity)
-        slided_activation = slide_activation_2_of_8(activation)
-        slide_us = time_cuda(
-            lambda: slidesparse(slided_activation), warmup, iterations
-        )
-        append_result(
-            writer, model, projection, "slidesparse_cusparselt", tokens,
-            spec, n, k, counts, capacity, slide_us, "strided_batch", "fp16",
-        )
-        slidesparse.close()
+        if "cusparselt" in args.external_backends:
+            slidesparse = SlideSparseBatch(slided_weight, capacity)
+            slided_activation = slide_activation_2_of_8(activation)
+            if tokens == args.batch_sizes[0]:
+                reference = torch.bmm(activation, weight.transpose(1, 2))
+                torch.testing.assert_close(
+                    slidesparse(slided_activation), reference, rtol=2e-2, atol=2e-2
+                )
+                del reference
+            slide_us = time_cuda(
+                lambda: slidesparse(slided_activation), warmup, iterations
+            )
+            append_result(
+                writer, model, projection, "slidesparse_cusparselt", tokens,
+                spec, n, k, counts, capacity, slide_us, "strided_batch", "fp16",
+                computed_m=spec.experts * capacity,
+            )
+            slidesparse.close()
+            del slidesparse, slided_activation
 
-        sputnik = SputnikBatch(weight, capacity)
-        prepared = sputnik.prepare_activation(activation)
-        sputnik_us = time_cuda(
-            lambda: sputnik.run_prepared(prepared), warmup, iterations
-        )
-        append_result(
-            writer, model, projection, "sputnik_batch", tokens,
-            spec, n, k, counts, capacity, sputnik_us, "grid_z_batch", "fp16",
-        )
-        del slidesparse, sputnik, activation, slided_activation, prepared
+        if "sputnik" in args.external_backends:
+            sputnik = SputnikBatch(weight, capacity)
+            prepared = sputnik.prepare_activation(activation)
+            if tokens == args.batch_sizes[0]:
+                reference = torch.bmm(activation, weight.transpose(1, 2))
+                torch.testing.assert_close(
+                    sputnik.run_prepared(prepared), reference, rtol=2e-2, atol=2e-2
+                )
+                del reference
+            sputnik_us = time_cuda(
+                lambda: sputnik.run_prepared(prepared), warmup, iterations
+            )
+            append_result(
+                writer, model, projection, "sputnik_batch", tokens,
+                spec, n, k, counts, capacity, sputnik_us, "grid_z_batch", "fp16",
+                computed_m=spec.experts * capacity,
+            )
+            del sputnik, prepared
+        del activation
         torch.cuda.empty_cache()
     del weight, slided_weight
     torch.cuda.empty_cache()
@@ -198,7 +219,8 @@ def run_native_baselines(
     for tokens in args.batch_sizes:
         counts = balanced_counts(tokens, spec, "cuda")
         expected_m = int(counts.max().item())
-        capacity = max(64, math.ceil(expected_m / 64) * 64)
+        capacity_alignment = 64 if expected_m <= 64 else 128
+        capacity = max(64, math.ceil(expected_m / capacity_alignment) * capacity_alignment)
         activation = torch.randn(
             spec.experts, capacity, k, device="cuda", dtype=torch.bfloat16
         )
@@ -217,13 +239,12 @@ def run_native_baselines(
         sparse_fn()
         deepgemm_fn()
         torch.cuda.synchronize()
-        if tokens == args.batch_sizes[0]:
-            for expert, rows in enumerate(counts.tolist()):
-                if rows:
-                    torch.testing.assert_close(
-                        sparse_out[expert, :rows], deepgemm_out[expert, :rows],
-                        rtol=2e-2, atol=2e-2,
-                    )
+        for expert, rows in enumerate(counts.tolist()):
+            if rows:
+                torch.testing.assert_close(
+                    sparse_out[expert, :rows], deepgemm_out[expert, :rows],
+                    rtol=2e-2, atol=2e-2,
+                )
         warmup, iterations = test_count(tokens, args)
         sparse_us = time_cuda(sparse_fn, warmup, iterations)
         deepgemm_us = time_cuda(deepgemm_fn, warmup, iterations)
@@ -250,7 +271,8 @@ def run(args: argparse.Namespace) -> None:
     fields = [
         "model", "projection", "backend", "token_bs", "num_experts",
         "active_experts", "top_k",
-        "valid_expert_m", "max_expert_m", "capacity_m", "N", "K", "dtype",
+        "valid_expert_m", "computed_expert_m", "max_expert_m", "capacity_m",
+        "N", "K", "dtype",
         "scheduler", "latency_us", "effective_tflops",
     ]
     output = Path(args.output)
@@ -274,15 +296,19 @@ def run(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models", nargs="+", choices=MODEL_SPECS, default=list(MODEL_SPECS))
+    parser.add_argument("--models", nargs="+", choices=MODEL_SPECS, default=DEFAULT_MODELS)
     parser.add_argument("--projections", nargs="+", choices=PROJECTIONS, default=list(PROJECTIONS))
     parser.add_argument(
         "--batch-sizes", type=int, nargs="+",
-        default=[8, 16, 32, 64, 128, 256, 4096, 8192, 16384],
+        default=[32, 64, 128, 4096, 8192, 16384, 32768],
     )
-    parser.add_argument("--warmup", type=int, default=5)
-    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--warmup", type=int, default=20)
+    parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--prebind-max-m", type=int, default=64)
+    parser.add_argument(
+        "--external-backends", nargs="+", choices=("cusparselt", "sputnik"),
+        default=["cusparselt"],
+    )
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--output", default="/tmp/moe_tp1_kernel_baselines.csv")
     parser.add_argument("--native-only", action="store_true")

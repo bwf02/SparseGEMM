@@ -3778,6 +3778,11 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
                 a, block_selector, dense_values, sparse_values,
                 hardware_metadata, masked_m, d, num_experts, max_m,
                 n, k, block_n, block_m);
+        } else if (max_m == 256 && n == 1536 && k == 2048) {
+            sm90_hybrid_block_sparse_bf16_grouped_masked_output128x128_nm12_stage3_persistent(
+                a, block_selector, dense_values, sparse_values,
+                hardware_metadata, masked_m, d, num_experts, max_m,
+                n, k, block_n, block_m);
         } else if (max_m == 256) {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output128x64_nm12_persistent(
                 a, block_selector, dense_values, sparse_values,
