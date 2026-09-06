@@ -15,13 +15,19 @@ from .moe_batch_baselines import (
 
 
 class SlideSparseProjection:
-    def __init__(self, weight: torch.Tensor):
+    def __init__(self, weight: torch.Tensor, *, offload_source: bool = False):
         if weight.dtype != torch.bfloat16 or weight.ndim != 3 or not weight.is_cuda:
             raise ValueError("SlideSparse serving requires CUDA BF16 [experts,N,K]")
         if torch.cuda.is_current_stream_capturing():
             raise RuntimeError("SlideSparse weights must be prepared before capture")
         self.weight = prune_2_of_8(weight.detach())
-        self.plans = {}
+        self.device = weight.device
+        self.plans = {
+            256: SlideSparseBatch(slide_weight_2_of_8(self.weight), 256, allocate_output=False)
+        }
+        self.compressed = self.plans[256].compressed
+        if offload_source:
+            self.weight = self.weight.cpu()
 
     def __call__(self, activation: torch.Tensor) -> torch.Tensor:
         if activation.ndim != 3:
@@ -32,8 +38,10 @@ class SlideSparseProjection:
         if m not in self.plans:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError(f"Warm up SlideSparse expert capacity M={m} before capture")
-            expanded = slide_weight_2_of_8(self.weight)
-            self.plans[m] = SlideSparseBatch(expanded, m, allocate_output=False)
+            expanded = slide_weight_2_of_8(self.weight.to(self.device))
+            self.plans[m] = SlideSparseBatch(
+                expanded, m, allocate_output=False, compressed_reference=self.compressed
+            )
         return self.plans[m](slide_activation_2_of_8(activation))
 
     def close(self):

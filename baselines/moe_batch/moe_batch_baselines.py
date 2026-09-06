@@ -84,7 +84,8 @@ def dense_to_fixed_csr(weight: torch.Tensor):
 class SlideSparseBatch:
     """cuSPARSELt strided-batch plan for SlideSparse-expanded 16-bit operands."""
 
-    def __init__(self, weight: torch.Tensor, m: int, *, allocate_output: bool = True):
+    def __init__(self, weight: torch.Tensor, m: int, *, allocate_output: bool = True,
+                 compressed_reference: torch.Tensor | None = None):
         if weight.dtype not in (torch.float16, torch.bfloat16) or not weight.is_cuda or weight.ndim != 3:
             raise ValueError("weight must be CUDA FP16 or BF16 [batch,N,K]")
         self.lib = ctypes.CDLL(str(ROOT / "build/libslidesparse_batch.so"))
@@ -100,7 +101,8 @@ class SlideSparseBatch:
         compressed_bytes = self.lib.slidesparse_batch_compressed_size(self.ctx)
         compress_ws_bytes = self.lib.slidesparse_batch_compress_workspace_size(self.ctx)
         matmul_ws_bytes = self.lib.slidesparse_batch_matmul_workspace_size(self.ctx)
-        self.compressed = torch.empty(compressed_bytes, device="cuda", dtype=torch.uint8)
+        # Initialize padding so bytewise layout validation is deterministic.
+        self.compressed = torch.zeros(compressed_bytes, device=weight.device, dtype=torch.uint8)
         compress_ws = torch.empty(compress_ws_bytes, device="cuda", dtype=torch.uint8)
         self.workspace = torch.empty(matmul_ws_bytes, device="cuda", dtype=torch.uint8)
         status = self.lib.slidesparse_batch_compress(
@@ -110,6 +112,11 @@ class SlideSparseBatch:
         if status:
             self._raise("compress")
         torch.cuda.current_stream().synchronize()
+        if compressed_reference is not None:
+            if not torch.equal(self.compressed, compressed_reference):
+                self.close()
+                raise ValueError("cuSPARSELt compressed layout differs across M plans")
+            self.compressed = compressed_reference
         self.output = (
             torch.empty((batches, m, n), device=weight.device, dtype=self.dtype)
             if allocate_output else None
