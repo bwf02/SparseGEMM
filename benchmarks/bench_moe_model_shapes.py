@@ -113,6 +113,8 @@ def time_cuda(fn, warmup: int, iterations: int) -> float:
 
 
 def test_count(tokens: int, args: argparse.Namespace) -> tuple[int, int]:
+    if args.warmup < 0 or args.iterations <= 0:
+        parser.error("warmup must be nonnegative and iterations must be positive")
     return args.warmup, args.iterations
 
 
@@ -261,6 +263,32 @@ def run_native_baselines(
             writer, model, projection, "deepgemm_grouped", tokens, spec, n, k,
             counts, capacity, deepgemm_us, "masked_grouped", "bf16",
         )
+        if args.with_cublas:
+            from cublas_grouped import CublasGrouped
+
+            cublas_out = torch.full_like(sparse_out, float("nan"))
+            cublas_fn = CublasGrouped(activation, dense_weight, counts, cublas_out)
+            try:
+                cublas_fn()
+                torch.cuda.synchronize()
+                for expert, rows in enumerate(counts.tolist()):
+                    if rows:
+                        torch.testing.assert_close(
+                            cublas_out[expert, :rows], deepgemm_out[expert, :rows],
+                            rtol=2e-2, atol=2e-2,
+                        )
+                    assert torch.isnan(cublas_out[expert, rows:]).all()
+                cublas_us = time_cuda(cublas_fn, warmup, iterations)
+                append_result(
+                    writer, model, projection, "cublas_grouped", tokens, spec, n, k,
+                    counts, capacity, cublas_us, "actual_m_grouped", "bf16",
+                )
+                print(f"  BS={tokens}: cuBLAS {cublas_fn.version}, "
+                      f"{cublas_us:.3f} us; DeepGEMM {deepgemm_us:.3f} us; "
+                      f"LoSparse {sparse_us:.3f} us", flush=True)
+            finally:
+                cublas_fn.close()
+            del cublas_fn, cublas_out
         del activation, sparse_out, deepgemm_out
         torch.cuda.empty_cache()
     del packed, dense_weight
@@ -305,6 +333,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--prebind-max-m", type=int, default=64)
+    parser.add_argument("--with-cublas", action="store_true",
+                        help="Add actual-M cuBLAS Grouped GEMM to the masked comparison")
     parser.add_argument(
         "--external-backends", nargs="+", choices=("cusparselt", "sputnik"),
         default=["cusparselt"],
@@ -316,6 +346,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.native_only and args.external_only:
         parser.error("--native-only and --external-only are mutually exclusive")
+    if args.with_cublas and (args.external_only or "masked" not in getattr(args, "native_layouts", ["masked"])):
+        parser.error("--with-cublas requires the native masked comparison")
     if min(args.batch_sizes) <= 0:
         parser.error("batch sizes must be positive")
     return args
