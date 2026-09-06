@@ -34,7 +34,10 @@ class SlideSparseProjection:
             raise ValueError("SlideSparse requires expert-padded [experts,M,K] input")
         if activation.shape[0] != self.weight.shape[0] or activation.shape[2] != self.weight.shape[2]:
             raise ValueError("SlideSparse activation and weight dimensions disagree")
-        m = activation.shape[1]
+        valid_m = activation.shape[1]
+        m = (valid_m + 15) // 16 * 16
+        if m != valid_m:
+            activation = torch.nn.functional.pad(activation, (0, 0, 0, m - valid_m))
         if m not in self.plans:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError(f"Warm up SlideSparse expert capacity M={m} before capture")
@@ -42,7 +45,7 @@ class SlideSparseProjection:
             self.plans[m] = SlideSparseBatch(
                 expanded, m, allocate_output=False, compressed_reference=self.compressed
             )
-        return self.plans[m](slide_activation_2_of_8(activation))
+        return self.plans[m](slide_activation_2_of_8(activation))[:, :valid_m]
 
     def close(self):
         for plan in self.plans.values():
