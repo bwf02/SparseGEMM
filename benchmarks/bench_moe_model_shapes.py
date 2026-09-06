@@ -113,8 +113,6 @@ def time_cuda(fn, warmup: int, iterations: int) -> float:
 
 
 def test_count(tokens: int, args: argparse.Namespace) -> tuple[int, int]:
-    if args.warmup < 0 or args.iterations <= 0:
-        parser.error("warmup must be nonnegative and iterations must be positive")
     return args.warmup, args.iterations
 
 
@@ -350,6 +348,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--with-cublas requires the native masked comparison")
     if min(args.batch_sizes) <= 0:
         parser.error("batch sizes must be positive")
+    if args.warmup < 0 or args.iterations <= 0:
+        parser.error("warmup must be nonnegative and iterations must be positive")
     return args
 
 
