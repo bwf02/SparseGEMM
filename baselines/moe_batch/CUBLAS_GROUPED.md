@@ -2,6 +2,7 @@
 
 This baseline calls `cublasGemmGroupedBatchedEx`, not a Python loop over GEMMs
 or the uniform batched API. It requires a cuBLAS library exposing that symbol.
+The default library name follows PyTorch's CUDA major version (12 or 13).
 `CUBLAS_LIBRARY` can select the shared library if it is not on the loader path.
 
 ## Matched Comparison

@@ -64,6 +64,9 @@ def main():
                            ("prefill", sorted({r["token_bs"] for r in paired if r["token_bs"] >= 4096}))]:
         if not batches:
             continue
+        limit = max(r["deepgemm_grouped"] / r[b] for r in paired
+                    if r["token_bs"] in batches for b, *_ in SERIES)
+        limit = math.ceil(limit * 1.08 * 2) / 2
         fig, axes = plt.subplots(len(batches), 1, figsize=(7.1, 1.28 * len(batches) + 0.5),
                                  squeeze=False)
         for ax, batch in zip(axes[:, 0], batches):
@@ -84,12 +87,14 @@ def main():
             ax.set_xticks(x, [name for _, name in MODELS] * 2)
             ax.tick_params(axis="x", labelsize=7, pad=2)
             ax.set_xlim(-0.5, 7.5)
-            ax.set_ylim(bottom=0)
+            ax.set_ylim(0, limit)
+            ax.set_yticks(np.arange(0, limit + 0.1, 0.5))
             ax.set_title(f"BS={batch:,}    |    Gate/Up (left)    /    Down (right)",
                          fontsize=8, fontweight="bold", pad=3)
             ax.grid(axis="y", alpha=0.15)
             ax.set_axisbelow(True)
         handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.text(0.98, 0.987, "H20", ha="right", va="top", fontsize=9, fontweight="bold")
         fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
         fig.supylabel("Speedup over DeepGEMM", fontsize=9)
         fig.tight_layout(rect=(0.025, 0, 1, 0.94), h_pad=1.0)

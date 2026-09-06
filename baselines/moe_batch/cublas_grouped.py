@@ -34,7 +34,8 @@ class CublasGrouped:
         self.activation, self.weight, self.out = tensors
         self.device = activation.device
         self.handle = ct.c_void_p()
-        self.lib = ct.CDLL(os.environ.get("CUBLAS_LIBRARY", "libcublas.so.12"))
+        cuda_major = torch.version.cuda.split(".")[0]
+        self.lib = ct.CDLL(os.environ.get("CUBLAS_LIBRARY", f"libcublas.so.{cuda_major}"))
         p, i = ct.c_void_p, ct.c_int
         self.lib.cublasCreate_v2.argtypes = [ct.POINTER(p)]
         self.lib.cublasDestroy_v2.argtypes = [p]
