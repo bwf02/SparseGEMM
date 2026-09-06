@@ -4,6 +4,8 @@ The caller supplies expert-padded activations and owns routing/combination.
 Weight pruning is initialization work; activation expansion is always online.
 """
 
+import os
+
 import torch
 
 from .moe_batch_baselines import (
@@ -16,6 +18,9 @@ from .moe_batch_baselines import (
 
 class SlideSparseProjection:
     def __init__(self, weight: torch.Tensor, *, offload_source: bool = False):
+        self.chunk_m = int(os.environ.get("SLIDESPARSE_ACTIVATION_CHUNK_M", "0"))
+        if self.chunk_m < 0 or self.chunk_m % 16:
+            raise ValueError("SlideSparse activation chunk M must be zero or a positive multiple of 16")
         if weight.dtype != torch.bfloat16 or weight.ndim != 3 or not weight.is_cuda:
             raise ValueError("SlideSparse serving requires CUDA BF16 [experts,N,K]")
         if torch.cuda.is_current_stream_capturing():
@@ -36,6 +41,16 @@ class SlideSparseProjection:
         if activation.shape[0] != self.weight.shape[0] or activation.shape[2] != self.weight.shape[2]:
             raise ValueError("SlideSparse activation and weight dimensions disagree")
         valid_m = activation.shape[1]
+        if self.chunk_m and valid_m > self.chunk_m:
+            # Bound temporary expansion, not the logical request or expert set.
+            output = torch.empty(
+                (*activation.shape[:2], self.weight.shape[1]),
+                device=activation.device, dtype=activation.dtype,
+            )
+            for start in range(0, valid_m, self.chunk_m):
+                end = min(start + self.chunk_m, valid_m)
+                output[:, start:end] = self(activation[:, start:end])
+            return output
         m = (valid_m + 15) // 16 * 16
         if m != valid_m:
             activation = torch.nn.functional.pad(activation, (0, 0, 0, m - valid_m))

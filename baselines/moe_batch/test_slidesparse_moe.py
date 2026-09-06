@@ -1,5 +1,6 @@
 """Remote GPU checks: python -m baselines.moe_batch.test_slidesparse_moe."""
 
+import os
 import unittest
 
 import torch
@@ -9,6 +10,29 @@ from .slidesparse_moe import SlideSparseProjection
 
 @unittest.skipUnless(torch.cuda.is_available(), "Requires CUDA")
 class SlideSparseServingTest(unittest.TestCase):
+    def test_chunked_expansion_with_tail_and_graph(self):
+        from unittest.mock import patch
+
+        weight = torch.randn(4, 256, 128, device="cuda", dtype=torch.bfloat16)
+        with patch.dict(os.environ, {"SLIDESPARSE_ACTIVATION_CHUNK_M": "32"}):
+            projection = SlideSparseProjection(weight, offload_source=True)
+        try:
+            x = torch.randn(4, 70, 128, device="cuda", dtype=torch.bfloat16)
+            expected_weight = projection.weight.cuda().float().transpose(1, 2)
+            expected = torch.bmm(x.float(), expected_weight).bfloat16()
+            torch.testing.assert_close(projection(x), expected, rtol=2e-2, atol=5e-2)
+            self.assertEqual(set(projection.plans), {16, 32, 256})
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                output = projection(x)
+            x.normal_()
+            graph.replay()
+            expected = torch.bmm(x.float(), expected_weight).bfloat16()
+            torch.testing.assert_close(output, expected, rtol=2e-2, atol=5e-2)
+            del graph
+        finally:
+            projection.close()
+
     def test_projection_and_graph_replay(self):
         torch.manual_seed(1234)
         weight = torch.randn(4, 256, 128, device="cuda", dtype=torch.bfloat16)
