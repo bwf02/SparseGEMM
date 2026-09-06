@@ -26,6 +26,7 @@ class SlideSparseProjection:
             256: SlideSparseBatch(slide_weight_2_of_8(self.weight), 256, allocate_output=False)
         }
         self.compressed = self.plans[256].compressed
+        self.workspace = self.plans[256].workspace
         if offload_source:
             self.weight = self.weight.cpu()
 
@@ -43,7 +44,8 @@ class SlideSparseProjection:
                 raise RuntimeError(f"Warm up SlideSparse expert capacity M={m} before capture")
             expanded = slide_weight_2_of_8(self.weight.to(self.device))
             self.plans[m] = SlideSparseBatch(
-                expanded, m, allocate_output=False, compressed_reference=self.compressed
+                expanded, m, allocate_output=False, compressed_reference=self.compressed,
+                workspace_reference=self.workspace,
             )
         output = self.plans[m](slide_activation_2_of_8(activation))
         return output if m == valid_m else output[:, :valid_m]

@@ -85,7 +85,8 @@ class SlideSparseBatch:
     """cuSPARSELt strided-batch plan for SlideSparse-expanded 16-bit operands."""
 
     def __init__(self, weight: torch.Tensor, m: int, *, allocate_output: bool = True,
-                 compressed_reference: torch.Tensor | None = None):
+                 compressed_reference: torch.Tensor | None = None,
+                 workspace_reference: torch.Tensor | None = None):
         if weight.dtype not in (torch.float16, torch.bfloat16) or not weight.is_cuda or weight.ndim != 3:
             raise ValueError("weight must be CUDA FP16 or BF16 [batch,N,K]")
         self.lib = ctypes.CDLL(str(ROOT / "build/libslidesparse_batch.so"))
@@ -104,7 +105,13 @@ class SlideSparseBatch:
         # Initialize padding so bytewise layout validation is deterministic.
         self.compressed = torch.zeros(compressed_bytes, device=weight.device, dtype=torch.uint8)
         compress_ws = torch.empty(compress_ws_bytes, device="cuda", dtype=torch.uint8)
-        self.workspace = torch.empty(matmul_ws_bytes, device="cuda", dtype=torch.uint8)
+        if workspace_reference is not None:
+            if workspace_reference.device != weight.device or workspace_reference.numel() < matmul_ws_bytes:
+                self.close()
+                raise ValueError("Shared cuSPARSELt workspace is too small or on another device")
+            self.workspace = workspace_reference
+        else:
+            self.workspace = torch.empty(matmul_ws_bytes, device=weight.device, dtype=torch.uint8)
         status = self.lib.slidesparse_batch_compress(
             self.ctx, weight.data_ptr(), self.compressed.data_ptr(),
             compress_ws.data_ptr() if compress_ws_bytes else 0, self._stream()
