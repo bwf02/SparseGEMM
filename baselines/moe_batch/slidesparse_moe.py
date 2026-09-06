@@ -47,6 +47,8 @@ class SlideSparseProjection:
                 expanded, m, allocate_output=False, compressed_reference=self.compressed,
                 workspace_reference=self.workspace,
             )
+            # Existing plans retain older buffers referenced by captured graphs.
+            self.workspace = self.plans[m].workspace
         output = self.plans[m](slide_activation_2_of_8(activation))
         return output if m == valid_m else output[:, :valid_m]
 

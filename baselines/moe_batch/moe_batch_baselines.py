@@ -106,10 +106,13 @@ class SlideSparseBatch:
         self.compressed = torch.zeros(compressed_bytes, device=weight.device, dtype=torch.uint8)
         compress_ws = torch.empty(compress_ws_bytes, device="cuda", dtype=torch.uint8)
         if workspace_reference is not None:
-            if workspace_reference.device != weight.device or workspace_reference.numel() < matmul_ws_bytes:
+            if workspace_reference.device != weight.device:
                 self.close()
-                raise ValueError("Shared cuSPARSELt workspace is too small or on another device")
-            self.workspace = workspace_reference
+                raise ValueError("Shared cuSPARSELt workspace is on another device")
+            self.workspace = (
+                workspace_reference if workspace_reference.numel() >= matmul_ws_bytes
+                else torch.empty(matmul_ws_bytes, device=weight.device, dtype=torch.uint8)
+            )
         else:
             self.workspace = torch.empty(matmul_ws_bytes, device=weight.device, dtype=torch.uint8)
         status = self.lib.slidesparse_batch_compress(
