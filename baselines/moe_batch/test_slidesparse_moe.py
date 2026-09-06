@@ -20,6 +20,9 @@ class SlideSparseServingTest(unittest.TestCase):
                     x = torch.randn(4, m, 128, device="cuda", dtype=torch.bfloat16)
                     expected = torch.bmm(x.float(), projection.weight.float().transpose(1, 2)).bfloat16()
                     torch.testing.assert_close(projection(x), expected, rtol=2e-2, atol=5e-2)
+                    released = projection(x)
+                    released.set_(torch.empty(0, device="cuda", dtype=released.dtype))
+                    torch.testing.assert_close(projection(x), expected, rtol=2e-2, atol=5e-2)
                     stream = torch.cuda.Stream()
                     stream.wait_stream(torch.cuda.current_stream())
                     with torch.cuda.stream(stream):

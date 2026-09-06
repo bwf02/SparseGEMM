@@ -36,11 +36,13 @@ extern "C" {
 
 const char* slidesparse_batch_last_error() { return last_error; }
 
-void* slidesparse_batch_create(int batches, int m, int n, int k) {
+void* slidesparse_batch_create(int batches, int m, int n, int k, int dtype_code) {
   last_error[0] = '\0';
-  if (batches <= 0 || m <= 0 || n <= 0 || k <= 0 || n % 8 || k % 16) {
+  if (batches <= 0 || m <= 0 || n <= 0 || k <= 0 || n % 8 || k % 16 ||
+      (dtype_code != 0 && dtype_code != 1)) {
     std::snprintf(last_error, sizeof(last_error),
-                  "invalid shape: batches=%d M=%d N=%d K=%d", batches, m, n, k);
+                  "invalid configuration: batches=%d M=%d N=%d K=%d dtype=%d",
+                  batches, m, n, k, dtype_code);
     return nullptr;
   }
   Context* ctx = new (std::nothrow) Context;
@@ -49,17 +51,18 @@ void* slidesparse_batch_create(int batches, int m, int n, int k) {
   int64_t weight_stride = static_cast<int64_t>(n) * k;
   int64_t activation_stride = static_cast<int64_t>(m) * k;
   int64_t output_stride = static_cast<int64_t>(m) * n;
+  cudaDataType_t dtype = dtype_code == 0 ? CUDA_R_16F : CUDA_R_16BF;
   if (!check(cusparseLtInit(&ctx->handle), "cusparseLtInit")) goto fail;
 
   if (!check(cusparseLtStructuredDescriptorInit(
-          &ctx->handle, &ctx->weight, k, n, k, 16, CUDA_R_16F,
+          &ctx->handle, &ctx->weight, k, n, k, 16, dtype,
           CUSPARSE_ORDER_COL, CUSPARSELT_SPARSITY_50_PERCENT),
           "cusparseLtStructuredDescriptorInit")) goto fail;
   if (!check(cusparseLtDenseDescriptorInit(
-          &ctx->handle, &ctx->activation, k, m, k, 16, CUDA_R_16F,
+          &ctx->handle, &ctx->activation, k, m, k, 16, dtype,
           CUSPARSE_ORDER_COL), "cusparseLtDenseDescriptorInit(A)")) goto fail;
   if (!check(cusparseLtDenseDescriptorInit(
-          &ctx->handle, &ctx->output, n, m, n, 16, CUDA_R_16F,
+          &ctx->handle, &ctx->output, n, m, n, 16, dtype,
           CUSPARSE_ORDER_COL), "cusparseLtDenseDescriptorInit(D)")) goto fail;
 
   if (!check(cusparseLtMatDescSetAttribute(

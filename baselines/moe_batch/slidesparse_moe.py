@@ -33,7 +33,7 @@ class SlideSparseProjection:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError(f"Warm up SlideSparse expert capacity M={m} before capture")
             expanded = slide_weight_2_of_8(self.weight)
-            self.plans[m] = SlideSparseBatch(expanded, m)
+            self.plans[m] = SlideSparseBatch(expanded, m, allocate_output=False)
         return self.plans[m](slide_activation_2_of_8(activation))
 
     def close(self):

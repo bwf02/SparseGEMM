@@ -20,6 +20,15 @@ def prune_2_of_8(weight: torch.Tensor) -> torch.Tensor:
     return grouped.scatter(-1, prune, 0).reshape_as(weight).contiguous()
 
 
+def prune_2_of_4(weight: torch.Tensor) -> torch.Tensor:
+    """Magnitude-prune exactly two values in every contiguous group of four."""
+    if weight.shape[-1] % 4:
+        raise ValueError("K must be divisible by 4")
+    grouped = weight.reshape(*weight.shape[:-1], -1, 4)
+    prune = grouped.float().abs().topk(2, dim=-1, largest=False).indices
+    return grouped.scatter(-1, prune, 0).reshape_as(weight).contiguous()
+
+
 def slide_weight_2_of_8(weight: torch.Tensor) -> torch.Tensor:
     """Apply SlideSparse's greedy 6:8-to-2:4 weight expansion."""
     if weight.shape[-1] % 8:
@@ -73,16 +82,19 @@ def dense_to_fixed_csr(weight: torch.Tensor):
 
 
 class SlideSparseBatch:
-    """cuSPARSELt strided-batch plan for SlideSparse-expanded FP16 operands."""
+    """cuSPARSELt strided-batch plan for SlideSparse-expanded 16-bit operands."""
 
-    def __init__(self, weight: torch.Tensor, m: int):
-        if weight.dtype != torch.float16 or not weight.is_cuda or weight.ndim != 3:
-            raise ValueError("weight must be CUDA FP16 [batch,N,K]")
+    def __init__(self, weight: torch.Tensor, m: int, *, allocate_output: bool = True):
+        if weight.dtype not in (torch.float16, torch.bfloat16) or not weight.is_cuda or weight.ndim != 3:
+            raise ValueError("weight must be CUDA FP16 or BF16 [batch,N,K]")
         self.lib = ctypes.CDLL(str(ROOT / "build/libslidesparse_batch.so"))
         self._bind()
         self.shape = tuple(weight.shape)
+        self.m = m
+        self.dtype = weight.dtype
         batches, n, k = self.shape
-        self.ctx = self.lib.slidesparse_batch_create(batches, m, n, k)
+        dtype_code = 0 if weight.dtype == torch.float16 else 1
+        self.ctx = self.lib.slidesparse_batch_create(batches, m, n, k, dtype_code)
         if not self.ctx:
             self._raise("create")
         compressed_bytes = self.lib.slidesparse_batch_compressed_size(self.ctx)
@@ -98,11 +110,14 @@ class SlideSparseBatch:
         if status:
             self._raise("compress")
         torch.cuda.current_stream().synchronize()
-        self.output = torch.empty((batches, m, n), device="cuda", dtype=torch.float16)
+        self.output = (
+            torch.empty((batches, m, n), device=weight.device, dtype=self.dtype)
+            if allocate_output else None
+        )
 
     def _bind(self):
         lib = self.lib
-        lib.slidesparse_batch_create.argtypes = [ctypes.c_int] * 4
+        lib.slidesparse_batch_create.argtypes = [ctypes.c_int] * 5
         lib.slidesparse_batch_create.restype = ctypes.c_void_p
         for name in ("compressed_size", "compress_workspace_size", "matmul_workspace_size"):
             fn = getattr(lib, f"slidesparse_batch_{name}")
@@ -124,18 +139,24 @@ class SlideSparseBatch:
         raise RuntimeError(f"cuSPARSELt {operation} failed: {message}")
 
     def __call__(self, activation: torch.Tensor) -> torch.Tensor:
-        if tuple(activation.shape) != (self.shape[0], self.output.shape[1], self.shape[2]):
+        if tuple(activation.shape) != (self.shape[0], self.m, self.shape[2]):
             raise ValueError("activation shape does not match the cached batch plan")
-        if activation.dtype != torch.float16 or not activation.is_cuda or not activation.is_contiguous():
-            raise ValueError("activation must be contiguous CUDA FP16")
+        if activation.dtype != self.dtype or not activation.is_cuda or not activation.is_contiguous():
+            raise ValueError(f"activation must be contiguous CUDA {self.dtype}")
+        output = self.output
+        if output is None:
+            output = torch.empty(
+                (self.shape[0], self.m, self.shape[1]),
+                device=activation.device, dtype=self.dtype,
+            )
         status = self.lib.slidesparse_batch_matmul(
             self.ctx, self.compressed.data_ptr(), activation.data_ptr(),
-            self.output.data_ptr(), self.workspace.data_ptr() if self.workspace.numel() else 0,
+            output.data_ptr(), self.workspace.data_ptr() if self.workspace.numel() else 0,
             self._stream(),
         )
         if status:
             self._raise("matmul")
-        return self.output
+        return output
 
     def close(self):
         if getattr(self, "ctx", None):
