@@ -44,34 +44,41 @@ def run(args: argparse.Namespace) -> None:
     dense_weight = torch.randn(
         args.experts, args.n, args.k, device="cuda", dtype=torch.float16
     )
-    sparse_weight = prune_2_of_8(dense_weight)
-    slided_weight = slide_weight_2_of_8(sparse_weight)
+    sparse_weight_fp16 = prune_2_of_8(dense_weight)
+    sparse_weight_bf16 = sparse_weight_fp16.to(torch.bfloat16)
+    slided_weight = slide_weight_2_of_8(sparse_weight_bf16)
 
     print("backend,experts,M,N,K,physical_K,sparsity,latency_us,dense_tflops")
     for m in args.m:
-        activation = torch.randn(
+        activation_fp16 = torch.randn(
             args.experts, m, args.k, device="cuda", dtype=torch.float16
         )
-        reference = torch.bmm(activation, sparse_weight.transpose(1, 2))
+        activation_bf16 = activation_fp16.to(torch.bfloat16)
+        reference = torch.bmm(
+            activation_bf16, sparse_weight_bf16.transpose(1, 2)
+        )
 
         slidesparse = SlideSparseBatch(slided_weight, m)
-        slided_activation = slide_activation_2_of_8(activation)
+        slided_activation = slide_activation_2_of_8(activation_bf16)
         check_close("slidesparse", slidesparse(slided_activation), reference)
         slide_us = time_cuda(
-            lambda: slide_activation_2_of_8(activation), args.warmup, args.iterations
+            lambda: slide_activation_2_of_8(activation_bf16), args.warmup, args.iterations
         )
         slidesparse_us = time_cuda(
             lambda: slidesparse(slided_activation), args.warmup, args.iterations
         )
 
-        sputnik = SputnikBatch(sparse_weight, m)
-        sputnik_activation = sputnik.prepare_activation(activation)
-        check_close("sputnik", sputnik.run_prepared(sputnik_activation), reference)
+        sputnik = SputnikBatch(sparse_weight_fp16, m)
+        sputnik_activation = sputnik.prepare_activation(activation_fp16)
+        sputnik_reference = torch.bmm(
+            activation_fp16, sparse_weight_fp16.transpose(1, 2)
+        )
+        check_close("sputnik", sputnik.run_prepared(sputnik_activation), sputnik_reference)
         sputnik_us = time_cuda(
             lambda: sputnik.run_prepared(sputnik_activation), args.warmup, args.iterations
         )
         transpose_us = time_cuda(
-            lambda: sputnik.prepare_activation(activation), args.warmup, args.iterations
+            lambda: sputnik.prepare_activation(activation_fp16), args.warmup, args.iterations
         )
 
         logical_flops = 2 * args.experts * m * args.n * args.k

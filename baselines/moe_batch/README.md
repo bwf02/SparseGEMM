@@ -6,6 +6,10 @@ sparsity:
 - **SlideSparse + cuSPARSELt:** magnitude-prunes two values per group of eight,
   expands each 6:8 group into three overlapping 2:4 groups, then invokes one
   cuSPARSELt strided-batch matmul. The physical K is `1.5 * K`.
+- **Native cuSPARSELt 2:4:** magnitude-prunes two values per group of four and
+  invokes the same BF16 strided-batch API without activation sliding. This 50%
+  sparse result is reported separately as a hardware reference, not as the
+  sparsity-matched baseline for the 25% sparse kernels.
 - **Sputnik batch adaptation:** stores the same pruned 2:8 weights in CSR and
   runs Sputnik's FP16 SpMM tile implementation with one matrix batch per
   `grid.z` slice. This is a single fixed-shape batch launch.
@@ -26,9 +30,10 @@ python benchmarks/bench_moe_batch_baselines.py \
   --experts 8 --m 128 256 512 1024 2048 4096 --n 1408 --k 2048
 ```
 
-Both kernels use FP16 because upstream Sputnik has FP16 and FP32 APIs but no
-BF16 implementation. The benchmark uses identical sparse weights, activations,
-fixed batch shapes, warmup, and timing. `slidesparse_cusparselt` reports only
+The model-shape benchmark uses BF16 for SlideSparse/cuSPARSELt so its precision
+matches SparseGEMM and DeepGEMM. Sputnik remains FP16 because upstream Sputnik
+has FP16 and FP32 APIs but no BF16 implementation. The benchmark uses fixed
+batch shapes, warmup, and timing. `slidesparse_cusparselt` reports only
 the batched GEMM latency; `slide_activation` reports the online expansion
 separately. `sputnik_batch` likewise excludes the layout transpose, which is
 reported as `sputnik_transpose`. Weight sliding, cuSPARSELt compression, and

@@ -142,6 +142,7 @@ def benchmark_masked(
     max_m: int,
     num_tests: int,
     flush_l2: bool,
+    validation_rows: int,
 ) -> None:
     experts, n, k = packed_weight.original_shape
     a = torch.randn(experts, max_m, k, device="cuda", dtype=torch.bfloat16)
@@ -167,9 +168,10 @@ def benchmark_masked(
     hybrid_fn()
     deepgemm_fn()
     torch.cuda.synchronize()
+    rows_to_validate = validation_rows or tokens_per_expert
     torch.testing.assert_close(
-        hybrid_out[:, :tokens_per_expert],
-        deepgemm_out[:, :tokens_per_expert],
+        hybrid_out[:, :rows_to_validate],
+        deepgemm_out[:, :rows_to_validate],
         rtol=2e-2,
         atol=2e-2,
     )
@@ -210,6 +212,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-n", type=int, default=1)
     parser.add_argument("--block-m", type=int, default=2)
     parser.add_argument("--num-tests", type=int, default=30)
+    parser.add_argument(
+        "--validation-rows",
+        type=int,
+        default=0,
+        help="rows per expert to validate; zero validates every active row",
+    )
     parser.add_argument("--no-flush-l2", action="store_true")
     args = parser.parse_args()
     if args.experts <= 0 or args.tokens_per_expert <= 0:
@@ -220,6 +228,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max-m must be at least 64 for the DeepGEMM SM90 baseline")
     if args.num_tests <= 0:
         parser.error("--num-tests must be positive")
+    if args.validation_rows < 0 or args.validation_rows > args.tokens_per_expert:
+        parser.error("--validation-rows must be between zero and tokens-per-expert")
     return args
 
 
@@ -258,6 +268,7 @@ def main() -> None:
         args.max_m,
         args.num_tests,
         not args.no_flush_l2,
+        args.validation_rows,
     )
 
 

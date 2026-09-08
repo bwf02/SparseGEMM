@@ -21,7 +21,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", nargs="+", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--reference", choices=("cublas_grouped", "deepgemm_grouped"),
+                        default="deepgemm_grouped")
     args = parser.parse_args()
+    reference_label = dict((key, label) for key, label, *_ in SERIES)[args.reference]
     if len({source.resolve() for source in args.inputs}) != len(args.inputs):
         raise ValueError("Each input file must occur exactly once")
     paired = []
@@ -64,7 +67,7 @@ def main():
                            ("prefill", sorted({r["token_bs"] for r in paired if r["token_bs"] >= 4096}))]:
         if not batches:
             continue
-        limit = max(r["deepgemm_grouped"] / r[b] for r in paired
+        limit = max(r[args.reference] / r[b] for r in paired
                     if r["token_bs"] in batches for b, *_ in SERIES)
         limit = math.ceil(limit * 1.08 * 2) / 2
         fig, axes = plt.subplots(len(batches), 1, figsize=(7.1, 1.28 * len(batches) + 0.5),
@@ -79,7 +82,7 @@ def main():
                             == (model, projection, batch)]
                     if not rows:
                         raise ValueError(f"Missing {model}/{projection}/BS={batch}")
-                    values.append(geometric_mean(r["deepgemm_grouped"] / r[backend] for r in rows))
+                    values.append(geometric_mean(r[args.reference] / r[backend] for r in rows))
                 ax.bar(x + (idx - 1) * 0.22, values, width=0.22, color=color,
                        edgecolor="#555555", linewidth=0.4, hatch=hatch, label=label)
             ax.axhline(1, color="#555555", linewidth=0.9, linestyle="--")
@@ -96,7 +99,7 @@ def main():
         handles, labels = axes[0, 0].get_legend_handles_labels()
         fig.text(0.98, 0.987, "H20", ha="right", va="top", fontsize=9, fontweight="bold")
         fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
-        fig.supylabel("Speedup over DeepGEMM", fontsize=9)
+        fig.supylabel(f"Speedup over {reference_label}", fontsize=9)
         fig.tight_layout(rect=(0.025, 0, 1, 0.94), h_pad=1.0)
         for ext in ("pdf", "png"):
             fig.savefig(args.output_dir / f"h20_cublas_grouped_{scale}.{ext}", dpi=220)

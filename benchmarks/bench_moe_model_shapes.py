@@ -20,6 +20,7 @@ import deep_gemm  # noqa: E402
 from moe_batch_baselines import (  # noqa: E402
     SlideSparseBatch,
     SputnikBatch,
+    prune_2_of_4,
     prune_2_of_8,
     slide_activation_2_of_8,
     slide_weight_2_of_8,
@@ -27,6 +28,7 @@ from moe_batch_baselines import (  # noqa: E402
 from sparse_gemm.hybrid_sparse import (  # noqa: E402
     HybridBlockSparseLayout,
     dense_to_hybrid_block_sparse,
+    hybrid_block_sparse_grouped_contiguous_wgmma_tma,
     hybrid_block_sparse_grouped_masked_wgmma_tma,
 )
 
@@ -149,21 +151,26 @@ def run_external_baselines(
     args: argparse.Namespace, writer,
 ) -> None:
     torch.manual_seed(args.seed)
-    weight = prune_2_of_8(torch.randn(
-        spec.experts, n, k, device="cuda", dtype=torch.float16
-    ))
+    source = torch.randn(
+        spec.experts, n, k, device="cuda", dtype=torch.bfloat16
+    )
+    weight = prune_2_of_8(source)
+    native_2to4_weight = prune_2_of_4(source)
+    del source
     slided_weight = slide_weight_2_of_8(weight)
+    sputnik_weight = weight.to(torch.float16) if "sputnik" in args.external_backends else None
     for tokens in args.batch_sizes:
         counts = balanced_counts(tokens, spec, "cuda")
         max_expert_m = int(counts.max().item())
         capacity = max(8, math.ceil(max_expert_m / 8) * 8)
         activation = torch.randn(
-            spec.experts, capacity, k, device="cuda", dtype=torch.float16
+            spec.experts, capacity, k, device="cuda", dtype=torch.bfloat16
         )
         warmup, iterations = test_count(tokens, args)
 
         if "cusparselt" in args.external_backends:
             slidesparse = SlideSparseBatch(slided_weight, capacity)
+            native_cusparselt = SlideSparseBatch(native_2to4_weight, capacity)
             slided_activation = slide_activation_2_of_8(activation)
             if tokens == args.batch_sizes[0]:
                 reference = torch.bmm(activation, weight.transpose(1, 2))
@@ -171,22 +178,54 @@ def run_external_baselines(
                     slidesparse(slided_activation), reference, rtol=2e-2, atol=2e-2
                 )
                 del reference
+                native_reference = torch.bmm(
+                    activation, native_2to4_weight.transpose(1, 2)
+                )
+                torch.testing.assert_close(
+                    native_cusparselt(activation), native_reference,
+                    rtol=2e-2, atol=2e-2,
+                )
+                del native_reference
             slide_us = time_cuda(
                 lambda: slidesparse(slided_activation), warmup, iterations
             )
+            slide_with_activation_us = time_cuda(
+                lambda: slidesparse(slide_activation_2_of_8(activation)),
+                warmup,
+                iterations,
+            )
+            native_cusparselt_us = time_cuda(
+                lambda: native_cusparselt(activation), warmup, iterations
+            )
             append_result(
                 writer, model, projection, "slidesparse_cusparselt", tokens,
-                spec, n, k, counts, capacity, slide_us, "strided_batch", "fp16",
+                spec, n, k, counts, capacity, slide_us, "strided_batch", "bf16",
                 computed_m=spec.experts * capacity,
             )
+            append_result(
+                writer, model, projection,
+                "slidesparse_cusparselt_with_activation", tokens,
+                spec, n, k, counts, capacity, slide_with_activation_us,
+                "activation_slide_plus_strided_batch", "bf16",
+                computed_m=spec.experts * capacity,
+            )
+            append_result(
+                writer, model, projection, "cusparselt_native_2to4", tokens,
+                spec, n, k, counts, capacity, native_cusparselt_us,
+                "strided_batch", "bf16", computed_m=spec.experts * capacity,
+            )
             slidesparse.close()
-            del slidesparse, slided_activation
+            native_cusparselt.close()
+            del slidesparse, native_cusparselt, slided_activation
 
         if "sputnik" in args.external_backends:
-            sputnik = SputnikBatch(weight, capacity)
-            prepared = sputnik.prepare_activation(activation)
+            sputnik_activation = activation.to(torch.float16)
+            sputnik = SputnikBatch(sputnik_weight, capacity)
+            prepared = sputnik.prepare_activation(sputnik_activation)
             if tokens == args.batch_sizes[0]:
-                reference = torch.bmm(activation, weight.transpose(1, 2))
+                reference = torch.bmm(
+                    sputnik_activation, sputnik_weight.transpose(1, 2)
+                )
                 torch.testing.assert_close(
                     sputnik.run_prepared(prepared), reference, rtol=2e-2, atol=2e-2
                 )
@@ -199,10 +238,10 @@ def run_external_baselines(
                 spec, n, k, counts, capacity, sputnik_us, "grid_z_batch", "fp16",
                 computed_m=spec.experts * capacity,
             )
-            del sputnik, prepared
+            del sputnik, prepared, sputnik_activation
         del activation
         torch.cuda.empty_cache()
-    del weight, slided_weight
+    del weight, native_2to4_weight, slided_weight, sputnik_weight
     torch.cuda.empty_cache()
 
 
@@ -293,6 +332,72 @@ def run_native_baselines(
     torch.cuda.empty_cache()
 
 
+def run_contiguous_baselines(
+    model: str, projection: str, spec: ModelSpec, n: int, k: int,
+    args: argparse.Namespace, writer,
+) -> None:
+    torch.manual_seed(args.seed)
+    layout = HybridBlockSparseLayout(64, 64, 1, 2)
+    source = torch.randn(spec.experts, n, k, device="cuda", dtype=torch.bfloat16)
+    packed = dense_to_hybrid_block_sparse(source, make_hybrid_mask(source, layout), layout)
+    dense_weight = packed.to_dense().contiguous()
+    del source
+
+    m_alignment = 128
+    deep_gemm.set_mk_alignment_for_contiguous_layout(m_alignment)
+    for tokens in args.batch_sizes:
+        counts = balanced_counts(tokens, spec, "cuda")
+        grouped_ends = []
+        previous_end = 0
+        for expert, rows in enumerate(counts.tolist()):
+            start = 0 if expert == 0 else math.ceil(previous_end / m_alignment) * m_alignment
+            previous_end = start + rows
+            grouped_ends.append(previous_end)
+        total_m = math.ceil(previous_end / m_alignment) * m_alignment
+        grouped_layout = torch.tensor(grouped_ends, device="cuda", dtype=torch.int32)
+        activation = torch.randn(total_m, k, device="cuda", dtype=torch.bfloat16)
+        sparse_out = torch.empty(total_m, n, device="cuda", dtype=torch.bfloat16)
+        deepgemm_out = torch.empty_like(sparse_out)
+
+        sparse_fn = lambda: hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+            activation, packed, grouped_layout, m_alignment, out=sparse_out,
+        )
+        deepgemm_fn = lambda: deep_gemm.m_grouped_bf16_gemm_nt_contiguous(
+            activation, dense_weight, deepgemm_out, grouped_layout,
+            use_psum_layout=True, ensure_zero_padding=True,
+            expected_m_for_psum_layout=int(counts.max().item()),
+        )
+        sparse_fn()
+        deepgemm_fn()
+        torch.cuda.synchronize()
+        previous_end = 0
+        for expert, end in enumerate(grouped_ends):
+            start = 0 if expert == 0 else math.ceil(previous_end / m_alignment) * m_alignment
+            if end > start:
+                torch.testing.assert_close(
+                    sparse_out[start:end], deepgemm_out[start:end], rtol=2e-2, atol=2e-2,
+                )
+            previous_end = end
+
+        warmup, iterations = test_count(tokens, args)
+        sparse_us = time_cuda(sparse_fn, warmup, iterations)
+        deepgemm_us = time_cuda(deepgemm_fn, warmup, iterations)
+        append_result(
+            writer, model, projection, "sparse_gemm_contiguous", tokens,
+            spec, n, k, counts, total_m, sparse_us,
+            "contiguous_psum_align128", "bf16", computed_m=total_m,
+        )
+        append_result(
+            writer, model, projection, "deepgemm_contiguous", tokens,
+            spec, n, k, counts, total_m, deepgemm_us,
+            "contiguous_psum_align128", "bf16", computed_m=total_m,
+        )
+        del activation, sparse_out, deepgemm_out, grouped_layout
+        torch.cuda.empty_cache()
+    del packed, dense_weight
+    torch.cuda.empty_cache()
+
+
 def run(args: argparse.Namespace) -> None:
     fields = [
         "model", "projection", "backend", "token_bs", "num_experts",
@@ -315,7 +420,10 @@ def run(args: argparse.Namespace) -> None:
                     run_external_baselines(model, projection, spec, n, k, args, writer)
                     handle.flush()
                 if not args.external_only:
-                    run_native_baselines(model, projection, spec, n, k, args, writer)
+                    if "masked" in args.native_layouts:
+                        run_native_baselines(model, projection, spec, n, k, args, writer)
+                    if "contiguous" in args.native_layouts:
+                        run_contiguous_baselines(model, projection, spec, n, k, args, writer)
                     handle.flush()
     print(f"Results: {output}")
 
@@ -333,6 +441,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prebind-max-m", type=int, default=64)
     parser.add_argument("--with-cublas", action="store_true",
                         help="Add actual-M cuBLAS Grouped GEMM to the masked comparison")
+    parser.add_argument(
+        "--native-layouts", nargs="+", choices=("masked", "contiguous"),
+        default=["masked"],
+    )
     parser.add_argument(
         "--external-backends", nargs="+", choices=("cusparselt", "sputnik"),
         default=["cusparselt"],

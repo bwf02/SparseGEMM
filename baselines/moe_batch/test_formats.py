@@ -5,6 +5,7 @@ import torch
 
 from moe_batch_baselines import (
     dense_to_fixed_csr,
+    prune_2_of_4,
     prune_2_of_8,
     slide_activation_2_of_8,
     slide_weight_2_of_8,
@@ -32,6 +33,10 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(tuple(values.shape), (2, 48))
         self.assertEqual(tuple(offsets.shape), (2, 5))
         self.assertEqual(columns.dtype, torch.int16)
+
+    def test_native_2to4_pruning_density(self):
+        weight = prune_2_of_4(torch.randn(2, 4, 16))
+        self.assertTrue(torch.all(weight.reshape(2, 4, -1, 4).ne(0).sum(-1) == 2))
 
 
 if __name__ == "__main__":
