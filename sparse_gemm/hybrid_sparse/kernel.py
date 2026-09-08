@@ -1903,6 +1903,7 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
     out: Optional[torch.Tensor] = None,
     expected_m: Optional[int] = None,
     use_active_expert_prebind: Optional[bool] = None,
+    use_bitmask_selector_fast_path: Optional[bool] = None,
     scheduler_trace: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Run fused WGMMA/TMA grouped GEMM with per-expert valid M counts.
@@ -1934,6 +1935,12 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
         ) not in ("0", "false", "False")
     if not isinstance(use_active_expert_prebind, bool):
         raise TypeError("use_active_expert_prebind must be a bool")
+    if use_bitmask_selector_fast_path is None:
+        use_bitmask_selector_fast_path = os.environ.get(
+            "SPARSE_GEMM_BITMASK_SELECTOR_FAST_PATH", "1"
+        ) not in ("0", "false", "False")
+    if not isinstance(use_bitmask_selector_fast_path, bool):
+        raise TypeError("use_bitmask_selector_fast_path must be a bool")
     if scheduler_trace is not None:
         if (
             scheduler_trace.device != a.device
@@ -1963,6 +1970,7 @@ def hybrid_block_sparse_grouped_masked_wgmma_tma(
         packed_weight.layout.block_n,
         packed_weight.layout.block_m,
         use_active_expert_prebind,
+        use_bitmask_selector_fast_path,
         scheduler_trace,
     )
     return out

@@ -3731,6 +3731,7 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
         const int& block_n,
         const int& block_m,
         const bool& use_active_expert_prebind,
+        const bool& use_bitmask_selector_fast_path,
         const std::optional<torch::Tensor>& scheduler_trace) {
     const auto [num_experts, max_m, k] = get_shape<3>(a);
     const auto [num_experts_, max_m_, n] = get_shape<3>(d);
@@ -3748,6 +3749,7 @@ static void hybrid_block_sparse_bf16_grouped_masked_wgmma_tma(
                 a, block_selector, dense_values, sparse_values,
                 hardware_metadata, masked_m, d, num_experts, max_m,
                 n, k, block_n, block_m, use_active_expert_prebind,
+                use_bitmask_selector_fast_path,
                 scheduler_trace);
         } else if (n == 1408 and k == 2048) {
             sm90_hybrid_block_sparse_bf16_grouped_masked_output64x64_nm12_fixed_stage2_masked_epilogue(
@@ -4591,6 +4593,7 @@ static void register_apis(pybind11::module_& m) {
         pybind11::arg("block_n"),
         pybind11::arg("block_m"),
         pybind11::arg("use_active_expert_prebind"),
+        pybind11::arg("use_bitmask_selector_fast_path"),
         pybind11::arg("scheduler_trace") = pybind11::none());
 }
 

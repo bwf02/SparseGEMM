@@ -100,6 +100,7 @@ __device__ __forceinline__ void advance_pipeline_grouped_masked_output32x64_stag
 template <int kBlockN, int kBlockM, int kPipelineStages,
           int kNumExperts, int kMaxM, int kN, int kK,
           int kNumWorkers, bool kUseActiveExpertPrebind,
+          bool kUseBitmaskSelectorFastPath,
           bool kEnableSchedulerTrace>
 __global__ __launch_bounds__(kThreadsGroupedMaskedOutput32x64Stage4Adaptive, 1)
 void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
@@ -417,10 +418,9 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
                     deep_gemm::ptx::warpgroup_fence_operand(
                         accumulator[i]);
                 deep_gemm::ptx::warpgroup_arrive();
-                if constexpr (kBlockN == 1 && kBlockM == 2) {
-                    const int sparse_local_block =
-                        (selector & 1ULL) != 0 ? 0 : 1;
-                    const int dense_local_block = 1 - sparse_local_block;
+                auto issue_sparse = [&](const int local_block,
+                                        const int sparse_slot,
+                                        const bool accumulate) {
 #pragma unroll
                     for (int k_tile = 0; k_tile < 2; ++k_tile) {
                         unsigned metadata = 0;
@@ -428,117 +428,73 @@ void hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive(
                             const int active_lane =
                                 (lane >> 2) * 2 + thread_in_metadata_group;
                             metadata = smem_metadata(consumer_stage)[
+                                sparse_slot * 128 +
                                 (k_tile * 4 + warp_in_math_wg) * 16 +
                                 active_lane];
                         }
                         sparse_desc.reg32_[0] =
                             sparse_desc_base_lo + stage_desc_offset +
+                            sparse_slot * (kBlock * (kBlock / 2) / 8) +
                             k_tile * 2;
                         activation_desc.reg32_[0] =
                             activation_desc_base_lo + stage_desc_offset +
-                            (sparse_local_block *
+                            (local_block *
                                  kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive *
                                  kBlock +
                              k_tile * 32) /
                                 8;
                         sparse_wgmma_grouped_masked_output32x64_stage4_adaptive(
                             sparse_desc.desc_, activation_desc.desc_, accumulator,
-                            metadata, has_accumulator || k_tile != 0);
+                            metadata, accumulate || k_tile != 0);
                     }
+                };
+                auto issue_dense = [&](const int local_block,
+                                       const int dense_slot,
+                                       const bool accumulate) {
 #pragma unroll
                     for (int k_tile = 0; k_tile < 4; ++k_tile) {
                         dense_desc.reg32_[0] =
                             dense_desc_base_lo + stage_desc_offset +
+                            dense_slot * (kBlock * kBlock / 8) +
                             k_tile * 2;
                         activation_desc.reg32_[0] =
                             activation_desc_base_lo + stage_desc_offset +
-                            (dense_local_block *
+                            (local_block *
                                  kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive *
                                  kBlock +
                              k_tile * 16) /
                                 8;
                         DenseMMAGroupedMaskedOutput32x64Stage4Adaptive::wgmma(
-                            dense_desc.desc_, activation_desc.desc_,
-                            accumulator, true);
+                            dense_desc.desc_, activation_desc.desc_, accumulator,
+                            accumulate || k_tile != 0);
+                    }
+                };
+                if constexpr (kUseBitmaskSelectorFastPath) {
+                    if ((selector & 1ULL) != 0) {
+                        issue_sparse(0, 0, has_accumulator);
+                        issue_dense(1, 0, true);
+                    } else {
+                        issue_dense(0, 0, has_accumulator);
+                        issue_sparse(1, 0, true);
                     }
                 } else {
 #pragma unroll
-                for (int local_block = 0; local_block < kBlockM;
-                     ++local_block) {
-                    const bool is_sparse =
-                        static_cast<bool>(
+                    for (int local_block = 0; local_block < kBlockM;
+                         ++local_block) {
+                        const bool is_sparse = static_cast<bool>(
                             (selector >> local_block) & 1ULL);
-                    const unsigned long long lower_mask =
-                        (1ULL << local_block) - 1ULL;
-                    const int sparse_slot =
-                        __popcll(selector & lower_mask);
-                    const int dense_slot = local_block - sparse_slot;
-                    if (is_sparse) {
-#pragma unroll
-                        for (int k_tile = 0; k_tile < 2; ++k_tile) {
-                            unsigned metadata = 0;
-                            if (thread_in_metadata_group < 2) {
-                                const int active_lane =
-                                    (lane >> 2) * 2 +
-                                    thread_in_metadata_group;
-                                metadata = smem_metadata(consumer_stage)[
-                                    sparse_slot * 128 +
-                                    (k_tile * 4 + warp_in_math_wg) * 16 +
-                                    active_lane];
-                            }
-                            const auto desc_a =
-                                deep_gemm::mma::sm90::make_smem_desc(
-                                    smem_sparse(consumer_stage) +
-                                        sparse_slot * kBlock *
-                                            (kBlock / 2) +
-                                        k_tile * 16,
-                                    static_cast<int>(
-                                        cute::GMMA::LayoutType::B64),
-                                    0, 512);
-                            const auto desc_b =
-                                deep_gemm::mma::sm90::make_smem_desc(
-                                    smem_activation(consumer_stage) +
-                                        local_block *
-                                            kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive *
-                                            kBlock +
-                                        k_tile * 32,
-                                    static_cast<int>(
-                                        cute::GMMA::LayoutType::B128),
-                                    0, 1024);
-                            sparse_wgmma_grouped_masked_output32x64_stage4_adaptive(
-                                desc_a.desc_, desc_b.desc_, accumulator,
-                                metadata,
-                                has_accumulator || local_block != 0 ||
-                                    k_tile != 0);
-                        }
-                    } else {
-#pragma unroll
-                        for (int k_tile = 0; k_tile < 4; ++k_tile) {
-                            const auto desc_a =
-                                deep_gemm::mma::sm90::make_smem_desc(
-                                    smem_dense(consumer_stage) +
-                                        dense_slot * kBlock * kBlock +
-                                        k_tile * 16,
-                                    static_cast<int>(
-                                        cute::GMMA::LayoutType::B128),
-                                    0, 1024);
-                            const auto desc_b =
-                                deep_gemm::mma::sm90::make_smem_desc(
-                                    smem_activation(consumer_stage) +
-                                        local_block *
-                                            kOutputTileMGroupedMaskedOutput32x64Stage4Adaptive *
-                                            kBlock +
-                                        k_tile * 16,
-                                    static_cast<int>(
-                                        cute::GMMA::LayoutType::B128),
-                                    0, 1024);
-                            DenseMMAGroupedMaskedOutput32x64Stage4Adaptive::wgmma(
-                                desc_a.desc_, desc_b.desc_, accumulator,
-                                has_accumulator || local_block != 0 ||
-                                    k_tile != 0);
-                        }
+                        const unsigned long long lower_mask =
+                            (1ULL << local_block) - 1ULL;
+                        const int sparse_slot =
+                            __popcll(selector & lower_mask);
+                        const int dense_slot = local_block - sparse_slot;
+                        const bool accumulate =
+                            has_accumulator || local_block != 0;
+                        if (is_sparse)
+                            issue_sparse(local_block, sparse_slot, accumulate);
+                        else
+                            issue_dense(local_block, dense_slot, accumulate);
                     }
-                }
                 }
                 deep_gemm::ptx::warpgroup_commit_batch();
 #pragma unroll

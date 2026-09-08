@@ -1297,6 +1297,85 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         self.assertEqual(torch.count_nonzero(actual[129:256]).item(), 0)
         self.assertEqual(torch.count_nonzero(actual[258:]).item(), 0)
 
+    def test_grouped_contiguous_small_group_prebind_handles_empty_experts(self):
+        torch.manual_seed(307)
+        weight = torch.randn(
+            4, 128, 256, device="cuda", dtype=torch.bfloat16
+        )
+        activation = torch.randn(
+            128, 256, device="cuda", dtype=torch.bfloat16
+        )
+        grouped_layout = torch.tensor(
+            [3, 64, 66, 128], device="cuda", dtype=torch.int32
+        )
+
+        patterns = (
+            (1, 4, (0,)),
+            (3, 4, (0, 1, 2)),
+            (1, 1, (0,)),
+        )
+        for block_n, block_m, sparse_block_ids in patterns:
+            with self.subTest(block_n=block_n, block_m=block_m):
+                layout = HybridBlockSparseLayout(
+                    64, 64, block_n, block_m
+                )
+                mask = make_grouped_mask(
+                    weight, layout, sparse_block_ids=sparse_block_ids
+                )
+                packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+                expected = hybrid_block_sparse_grouped_contiguous_ref(
+                    activation, packed, grouped_layout, m_alignment=64
+                )
+                actual = hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+                    activation, packed, grouped_layout, m_alignment=64
+                )
+
+                torch.testing.assert_close(
+                    actual, expected, rtol=1e-2, atol=1e-2
+                )
+                self.assertEqual(
+                    torch.count_nonzero(actual[3:64]).item(), 0
+                )
+                self.assertEqual(
+                    torch.count_nonzero(actual[66:]).item(), 0
+                )
+
+    def test_grouped_contiguous_prebind_cycles_across_worker_waves(self):
+        torch.manual_seed(308)
+        num_experts = 96
+        layout = HybridBlockSparseLayout(64, 64, 3, 4)
+        weight = torch.randn(
+            num_experts, 128, 256, device="cuda", dtype=torch.bfloat16
+        )
+        mask = make_grouped_mask(
+            weight, layout, sparse_block_ids=(0, 1, 2)
+        )
+        packed = dense_to_hybrid_block_sparse(weight, mask, layout)
+
+        grouped_ends = []
+        previous_end = 0
+        for expert in range(num_experts):
+            start = ((previous_end + 63) // 64) * 64
+            rows = 0 if expert % 11 == 0 else expert % 63 + 1
+            previous_end = start + rows
+            grouped_ends.append(previous_end)
+        total_m = ((previous_end + 63) // 64) * 64
+        activation = torch.randn(
+            total_m, 256, device="cuda", dtype=torch.bfloat16
+        )
+        grouped_layout = torch.tensor(
+            grouped_ends, device="cuda", dtype=torch.int32
+        )
+
+        expected = hybrid_block_sparse_grouped_contiguous_ref(
+            activation, packed, grouped_layout, m_alignment=64
+        )
+        actual = hybrid_block_sparse_grouped_contiguous_wgmma_tma(
+            activation, packed, grouped_layout, m_alignment=64
+        )
+
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
     def test_grouped_contiguous_skips_single_padded_k_block(self):
         torch.manual_seed(306)
         layout = HybridBlockSparseLayout(64, 64, 1, 2)
@@ -1447,6 +1526,49 @@ class TestHybridSparseNaiveKernel(unittest.TestCase):
         torch.testing.assert_close(
             prebind_output[2, :33], global_output[2, :33], rtol=0, atol=0
         )
+
+    def test_grouped_masked_wgmma_tma_bitmask_selector_matches_per_block(self):
+        torch.manual_seed(19)
+        layout = HybridBlockSparseLayout(64, 64, 1, 2)
+        weight = torch.randn(4, 128, 256, device="cuda", dtype=torch.bfloat16)
+        mask = torch.stack(
+            [
+                make_mask(weight[0], layout, (0,)),
+                make_mask(weight[1], layout, (1,)),
+                make_mask(weight[2], layout, (0,)),
+                make_mask(weight[3], layout, (1,)),
+            ]
+        )
+        packed = dense_to_hybrid_block_sparse(
+            weight, mask, layout
+        )
+        activation = torch.randn(4, 64, 256, device="cuda", dtype=torch.bfloat16)
+        masked_m = torch.tensor([1, 5, 33, 64], device="cuda", dtype=torch.int32)
+
+        per_block_output = hybrid_block_sparse_grouped_masked_wgmma_tma(
+            activation,
+            packed,
+            masked_m,
+            expected_m=64,
+            use_active_expert_prebind=False,
+            use_bitmask_selector_fast_path=False,
+        )
+        bitmask_output = hybrid_block_sparse_grouped_masked_wgmma_tma(
+            activation,
+            packed,
+            masked_m,
+            expected_m=64,
+            use_active_expert_prebind=False,
+            use_bitmask_selector_fast_path=True,
+        )
+
+        for expert, rows in enumerate(masked_m.tolist()):
+            torch.testing.assert_close(
+                bitmask_output[expert, :rows],
+                per_block_output[expert, :rows],
+                rtol=0,
+                atol=0,
+            )
 
     def test_grouped_masked_wgmma_tma_output128_matches_reference(self):
         torch.manual_seed(406)

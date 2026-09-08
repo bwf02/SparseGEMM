@@ -3,6 +3,8 @@
 // Fused hybrid sparse grouped GEMM for contiguous psum and masked layouts.
 
 #include <deep_gemm/impls/sm90_hybrid_sparse_wgmma_tma_fused_stsm_persistent_lane_ready_group_stage_output64x64.cuh>
+#include <deep_gemm/impls/hybrid_sparse_group_dispatch.cuh>
+#include <deep_gemm/scheduler/active_expert_prebind.cuh>
 
 template <int kGroupedMode>
 __device__ __forceinline__ void resolve_hybrid_grouped_tile_64x64(
@@ -146,20 +148,42 @@ void hybrid_sparse_grouped_fused_output64x64(
     unsigned producer_phase = 0;
     int consumer_stage = 0;
     unsigned consumer_phase = 0;
-    for (int tile_idx = static_cast<int>(blockIdx.x);
-         tile_idx < total_tiles;
-         tile_idx += static_cast<int>(gridDim.x)) {
-        const int tile_m = tile_idx % tiles_m;
-        const int tile_n = tile_idx / tiles_m;
-        const int output_tile_n =
-            tile_n * kOutputTileNProducerMetadataGroupStage64x64;
-        const int block_row = tile_n;
+    deep_gemm::sched::ContiguousExpertPrebindScheduler<
+        64, kGroupedMode == 0>
+        contiguous_prebind_scheduler(
+            num_experts, static_cast<uint32_t>(gridDim.x), tiles_n,
+            m_alignment, grouped_index);
+    int tile_idx = static_cast<int>(blockIdx.x);
+    while (true) {
+        int tile_n;
         int expert;
         int output_tile_m;
         int valid_rows;
-        resolve_hybrid_grouped_tile_64x64<kGroupedMode>(
-            tile_m, grouped_index, total_rows, num_experts, max_m,
-            m_alignment, expert, output_tile_m, valid_rows);
+        if constexpr (kGroupedMode == 0) {
+            uint32_t group_idx;
+            uint32_t output_m;
+            uint32_t rows;
+            uint32_t n_block_idx;
+            if (!contiguous_prebind_scheduler.get_next_tile(
+                    group_idx, output_m, rows, n_block_idx))
+                break;
+            expert = static_cast<int>(group_idx);
+            output_tile_m = static_cast<int>(output_m);
+            valid_rows = static_cast<int>(rows);
+            tile_n = static_cast<int>(n_block_idx);
+        } else {
+            if (tile_idx >= total_tiles)
+                break;
+            const int tile_m = tile_idx % tiles_m;
+            tile_n = tile_idx / tiles_m;
+            resolve_hybrid_grouped_tile_64x64<kGroupedMode>(
+                tile_m, grouped_index, total_rows, num_experts, max_m,
+                m_alignment, expert, output_tile_m, valid_rows);
+            tile_idx += static_cast<int>(gridDim.x);
+        }
+        const int output_tile_n =
+            tile_n * kOutputTileNProducerMetadataGroupStage64x64;
+        const int block_row = tile_n;
 
         if (warp == 6 && valid_rows > 0) {
             const bool is_leader = cute::elect_one_sync();
@@ -250,76 +274,97 @@ void hybrid_sparse_grouped_fused_output64x64(
                         deep_gemm::ptx::warpgroup_fence_operand(
                             accumulator[i]);
                     deep_gemm::ptx::warpgroup_arrive();
+                    auto issue_sparse = [&](const int local_block,
+                                            const int sparse_slot,
+                                            const bool accumulate) {
 #pragma unroll
-                    for (int local_block = 0; local_block < kBlockM;
-                         ++local_block) {
-                        const bool is_sparse = static_cast<bool>(
-                            (selector >> local_block) & 1ULL);
-                        const unsigned long long lower_mask =
-                            (1ULL << local_block) - 1ULL;
-                        const int sparse_slot =
-                            __popcll(selector & lower_mask);
-                        const int dense_slot = local_block - sparse_slot;
-                        if (is_sparse) {
-#pragma unroll
-                            for (int k_tile = 0; k_tile < 2; ++k_tile) {
-                                unsigned metadata = 0;
-                                if (thread_in_metadata_group < 2) {
-                                    const int active_lane =
-                                        (lane >> 2) * 2 +
-                                        thread_in_metadata_group;
-                                    metadata = smem_metadata(consumer_stage)[
-                                        sparse_slot * 128 +
-                                        (k_tile * 4 + warp_in_math_wg) * 16 +
-                                        active_lane];
-                                }
-                                const auto desc_a =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_sparse(consumer_stage) +
-                                            sparse_slot * kBlock *
-                                                (kBlock / 2) +
-                                            k_tile * 16,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B64),
-                                        0, 512);
-                                const auto desc_b =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_activation(consumer_stage) +
-                                            local_block * kBlock * kBlock +
-                                            k_tile * 32,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B128),
-                                        0, 1024);
-                                sparse_wgmma_group_stage_64x64(
-                                    desc_a.desc_, desc_b.desc_, accumulator,
-                                    metadata,
-                                    has_accumulator || local_block != 0 ||
-                                        k_tile != 0);
+                        for (int k_tile = 0; k_tile < 2; ++k_tile) {
+                            unsigned metadata = 0;
+                            if (thread_in_metadata_group < 2) {
+                                const int active_lane =
+                                    (lane >> 2) * 2 +
+                                    thread_in_metadata_group;
+                                metadata = smem_metadata(consumer_stage)[
+                                    sparse_slot * 128 +
+                                    (k_tile * 4 + warp_in_math_wg) * 16 +
+                                    active_lane];
                             }
-                        } else {
+                            const auto desc_a =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_sparse(consumer_stage) +
+                                        sparse_slot * kBlock *
+                                            (kBlock / 2) +
+                                        k_tile * 16,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B64),
+                                    0, 512);
+                            const auto desc_b =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_activation(consumer_stage) +
+                                        local_block * kBlock * kBlock +
+                                        k_tile * 32,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B128),
+                                    0, 1024);
+                            sparse_wgmma_group_stage_64x64(
+                                desc_a.desc_, desc_b.desc_, accumulator,
+                                metadata, accumulate || k_tile != 0);
+                        }
+                    };
+                    auto issue_dense = [&](const int local_block,
+                                           const int dense_slot,
+                                           const bool accumulate) {
 #pragma unroll
-                            for (int k_tile = 0; k_tile < 4; ++k_tile) {
-                                const auto desc_a =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_dense(consumer_stage) +
-                                            dense_slot * kBlock * kBlock +
-                                            k_tile * 16,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B128),
-                                        0, 1024);
-                                const auto desc_b =
-                                    deep_gemm::mma::sm90::make_smem_desc(
-                                        smem_activation(consumer_stage) +
-                                            local_block * kBlock * kBlock +
-                                            k_tile * 16,
-                                        static_cast<int>(
-                                            cute::GMMA::LayoutType::B128),
-                                        0, 1024);
-                                DenseMMAProducerMetadataGroupStage64x64::wgmma(
-                                    desc_a.desc_, desc_b.desc_, accumulator,
-                                    has_accumulator || local_block != 0 ||
-                                        k_tile != 0);
-                            }
+                        for (int k_tile = 0; k_tile < 4; ++k_tile) {
+                            const auto desc_a =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_dense(consumer_stage) +
+                                        dense_slot * kBlock * kBlock +
+                                        k_tile * 16,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B128),
+                                    0, 1024);
+                            const auto desc_b =
+                                deep_gemm::mma::sm90::make_smem_desc(
+                                    smem_activation(consumer_stage) +
+                                        local_block * kBlock * kBlock +
+                                        k_tile * 16,
+                                    static_cast<int>(
+                                        cute::GMMA::LayoutType::B128),
+                                    0, 1024);
+                            DenseMMAProducerMetadataGroupStage64x64::wgmma(
+                                desc_a.desc_, desc_b.desc_, accumulator,
+                                accumulate || k_tile != 0);
+                        }
+                    };
+
+                    if constexpr (kBlockM <= 4) {
+                        const bool matched =
+                            deep_gemm::hybrid_sparse::dispatch_group_pattern<
+                                kBlockN, kBlockM>(
+                                    static_cast<unsigned>(selector),
+                                    issue_sparse, issue_dense,
+                                    has_accumulator);
+                        static_cast<void>(matched);
+                    } else {
+#pragma unroll
+                        for (int local_block = 0; local_block < kBlockM;
+                             ++local_block) {
+                            const bool is_sparse = static_cast<bool>(
+                                (selector >> local_block) & 1ULL);
+                            const unsigned long long lower_mask =
+                                (1ULL << local_block) - 1ULL;
+                            const int sparse_slot =
+                                __popcll(selector & lower_mask);
+                            const int dense_slot = local_block - sparse_slot;
+                            const bool accumulate =
+                                has_accumulator || local_block != 0;
+                            if (is_sparse)
+                                issue_sparse(
+                                    local_block, sparse_slot, accumulate);
+                            else
+                                issue_dense(
+                                    local_block, dense_slot, accumulate);
                         }
                     }
                     deep_gemm::ptx::warpgroup_commit_batch();

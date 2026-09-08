@@ -23,6 +23,7 @@ public:
         int block_m;
         int num_workers;
         bool use_active_expert_prebind;
+        bool use_bitmask_selector_fast_path;
         void* scheduler_trace;
         int scheduler_trace_max_tasks;
         bool enable_scheduler_trace;
@@ -36,13 +37,14 @@ public:
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(
         &hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive<
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
     (void)ptr;
 }}
 )",
             args.block_n, args.block_m,
             4, args.num_experts, args.max_m, args.n, args.k, args.num_workers,
             args.use_active_expert_prebind ? "true" : "false",
+            args.use_bitmask_selector_fast_path ? "true" : "false",
             args.enable_scheduler_trace ? "true" : "false");
     }
 
@@ -67,6 +69,7 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4
         const int num_experts, const int max_m, const int n, const int k,
         const int block_n, const int block_m,
         const bool use_active_expert_prebind,
+        const bool use_bitmask_selector_fast_path,
         const std::optional<torch::Tensor>& scheduler_trace) {
     DG_HOST_ASSERT(block_n == 1 and block_m == 2);
     DG_HOST_ASSERT(max_m == 64);
@@ -129,6 +132,7 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4
         .block_n = block_n, .block_m = block_m,
         .num_workers = num_workers,
         .use_active_expert_prebind = enable_prebind,
+        .use_bitmask_selector_fast_path = use_bitmask_selector_fast_path,
         .scheduler_trace = scheduler_trace_ptr,
         .scheduler_trace_max_tasks = scheduler_trace_max_tasks,
         .enable_scheduler_trace = enable_scheduler_trace,
@@ -137,13 +141,11 @@ static void sm90_hybrid_block_sparse_bf16_grouped_masked_output32x64_nm12_stage4
             256, smem_bytes),
     };
     const auto runtime = compiler->build(
-        enable_prebind
-            ? (enable_scheduler_trace
-                   ? "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_prebind_trace"
-                   : "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_prebind")
-            : (enable_scheduler_trace
-                   ? "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_global_persistent_trace"
-                   : "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_global_persistent"),
+        fmt::format(
+            "sm90_hybrid_sparse_grouped_masked_output32x64_nm12_stage4_adaptive_{}_{}{}",
+            enable_prebind ? "prebind" : "global_persistent",
+            use_bitmask_selector_fast_path ? "bitmask" : "per_block",
+            enable_scheduler_trace ? "_trace" : ""),
         SM90HybridSparseGroupedMaskedOutput32x64NM12Stage4AdaptiveRuntime::generate(args));
     SM90HybridSparseGroupedMaskedOutput32x64NM12Stage4AdaptiveRuntime::launch(runtime, args);
 }
