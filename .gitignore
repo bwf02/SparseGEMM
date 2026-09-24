@@ -24,3 +24,7 @@ stubs/
 
 # Symlinks to compiled extensions
 deep_gemm/*.so
+
+# Local agent instructions (all directories)
+AGENT.md
+AGENTS.md
